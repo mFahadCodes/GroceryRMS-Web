@@ -18,6 +18,7 @@ function record(): AuthoritativeSessionRecord {
       id: 7,
       isActive: true,
       authVersion: 3,
+      mustChangePassword: false,
       roleId: 2,
       role: {
         id: 2,
@@ -59,6 +60,7 @@ describe("authoritative JWT callback", () => {
       permissions: ["Initial permission:5"],
       sessionId: SESSION_ID,
       authVersion: 3,
+      mustChangePassword: true,
     } as User;
 
     const result = await updateAuthoritativeJwt(
@@ -74,6 +76,7 @@ describe("authoritative JWT callback", () => {
       permissions: ["Initial permission:5"],
       lastActivityAt: 1_000,
       expired: false,
+      mustChangePassword: true,
     });
     expect(deps.repository.findBySessionId).not.toHaveBeenCalled();
   });
@@ -85,6 +88,7 @@ describe("authoritative JWT callback", () => {
       permissions: [],
       sessionId: "",
       authVersion: 3,
+      mustChangePassword: false,
     } as User;
     await expect(
       updateAuthoritativeJwt({ token: {}, user }, dependencies()),
@@ -163,5 +167,23 @@ describe("authoritative JWT callback", () => {
     await expect(
       updateAuthoritativeJwt({ token: token(), now: 2_000 }, deps),
     ).resolves.toBeNull();
+  });
+
+  it("refreshes the rotation hint from authoritative database state", async () => {
+    const authoritative = record();
+    authoritative.user.mustChangePassword = true;
+    const result = await updateAuthoritativeJwt(
+      { token: token({ mustChangePassword: false }), now: 2_000 },
+      dependencies(authoritative),
+    );
+    expect(result?.mustChangePassword).toBe(true);
+  });
+
+  it("cannot be forced true by a stale token when the database is false", async () => {
+    const result = await updateAuthoritativeJwt(
+      { token: token({ mustChangePassword: true }), now: 2_000 },
+      dependencies(record()),
+    );
+    expect(result?.mustChangePassword).toBe(false);
   });
 });
