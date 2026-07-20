@@ -174,8 +174,6 @@ export async function addItemToOrder(input: {
     input.weightKg !== undefined && input.weightKg !== null
       ? Number(input.weightKg)
       : null;
-  const weight =
-    weightKgValue !== null ? new Prisma.Decimal(String(weightKgValue)) : null;
   const lineTotal =
     product.isWeighted && weightKgValue !== null
       ? (unitPrice * BigInt(Math.round(weightKgValue * 1000))) / 1000n
