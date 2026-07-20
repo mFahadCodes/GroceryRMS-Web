@@ -6,6 +6,7 @@ import { fail, ok } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
 import { getUserById, updateUser, deleteUser } from "@/lib/services/settings-service";
 import { updateUserSchema } from "@/lib/validators/settings.validators";
+import { ServiceError } from "@/lib/api/service-error";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -33,7 +34,17 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
-  const updated = await updateUser(userId, parsed.data);
+  let updated;
+  try {
+    updated = await updateUser(userId, parsed.data, {
+      actorUserId: auth.session.user.id,
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
+    return fail("Failed to update user", "UPDATE_USER_FAILED", 500);
+  }
   const auditValues = {
     ...(parsed.data.username !== undefined ? { username: parsed.data.username } : {}),
     ...(parsed.data.fullName !== undefined ? { fullName: parsed.data.fullName } : {}),

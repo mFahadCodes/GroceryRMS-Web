@@ -1,24 +1,26 @@
 import { z } from "zod";
 
-export const loginBodySchema = z
-  .object({
-    username: z.string().optional(),
-    password: z.string().optional(),
-    pin: z.string().optional(),
-  })
-  .refine(
-    (data) => {
-      const hasPin = Boolean(data.pin?.trim());
-      const hasPassword = Boolean(data.username?.trim() && data.password);
-      return hasPin || hasPassword;
-    },
-    { message: "Provide username/password or pin" },
-  );
+export const loginBodySchema = z.union([
+  z
+    .object({
+      username: z.string().min(1).max(64),
+      password: z.string().min(1).max(1024),
+    })
+    .strict(),
+  z
+    .object({
+      userId: z.number().int().positive(),
+      pin: z.string().regex(/^[0-9]{4}$/),
+    })
+    .strict(),
+]);
 
-export const validatePinSchema = z.object({
-  userId: z.number().int().positive(),
-  pin: z.string().min(1),
-});
+export const validatePinSchema = z
+  .object({
+    userId: z.number().int().positive(),
+    pin: z.string().regex(/^[0-9]{4}$/),
+  })
+  .strict();
 
 export const changePasswordSchema = z
   .object({

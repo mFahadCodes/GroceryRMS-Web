@@ -26,6 +26,7 @@ export interface BootstrapAdministratorStore {
   createAdministrator(
     input: BootstrapAdministratorCreateInput,
   ): Promise<{ id: number }>;
+  updateAdministratorPin(userId: number, pinHash: string): Promise<void>;
 }
 
 export interface BootstrapAdministratorDependencies {
@@ -35,7 +36,7 @@ export interface BootstrapAdministratorDependencies {
     operation: (store: BootstrapAdministratorStore) => Promise<T>,
   ): Promise<T>;
   hashPassword(password: string): Promise<string>;
-  hashPin(pin: string): string;
+  hashPin(userId: number, pin: string): Promise<string>;
 }
 
 export type BootstrapAdministratorResult =
@@ -114,19 +115,23 @@ export async function bootstrapAdministrator(
     }
 
     const passwordHash = await dependencies.hashPassword(passwordResult.value);
-    const pinHash = pinResult.value
-      ? dependencies.hashPin(pinResult.value)
-      : null;
     const administrator = await store.createAdministrator({
       username: usernameResult.value,
       fullName: "System Administrator",
       passwordHash,
-      pinHash,
+      pinHash: null,
       roleId: dependencies.adminRoleId,
       isActive: true,
       mustChangePassword: true,
       passwordChangedAt: null,
     });
+    if (pinResult.value) {
+      const pinHash = await dependencies.hashPin(
+        administrator.id,
+        pinResult.value,
+      );
+      await store.updateAdministratorPin(administrator.id, pinHash);
+    }
 
     return {
       status: "created",

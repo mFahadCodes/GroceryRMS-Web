@@ -156,10 +156,13 @@ export const checkoutSchema = z.object({
 
 export const voidOrderSchema = z.object({
   reason: z.string().min(1),
-  approvedByUserId: z.number().int().positive().optional(),
-  managerPin: z.string().min(1).optional(),
+  managerUserId: z.number().int().positive().optional(),
+  managerPin: z.string().regex(/^[0-9]{4}$/).optional(),
   reverseStock: z.boolean().default(false),
-});
+}).strict().refine(
+  (data) => Boolean(data.managerUserId) === Boolean(data.managerPin),
+  { message: "managerUserId and managerPin must be provided together" },
+);
 
 export const holdOrderSchema = z.object({
   notes: z.string().optional().nullable(),
@@ -196,14 +199,19 @@ export const applyOrderDiscountSchema = z
   .object({
     discountAmount: paisaSchema.optional(),
     discountPercent: z.number().min(0).max(100).optional(),
-    approvedByUserId: z.number().int().positive().optional(),
-    managerPin: z.string().min(1).optional(),
+    managerUserId: z.number().int().positive().optional(),
+    managerPin: z.string().regex(/^[0-9]{4}$/).optional(),
     reason: z.string().optional().nullable(),
   })
+  .strict()
   .refine(
     (data) =>
       data.discountAmount !== undefined || data.discountPercent !== undefined,
     { message: "Either discountAmount or discountPercent is required" },
+  )
+  .refine(
+    (data) => Boolean(data.managerUserId) === Boolean(data.managerPin),
+    { message: "managerUserId and managerPin must be provided together" },
   );
 
 export type CheckoutInput = z.infer<typeof checkoutSchema>;

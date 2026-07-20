@@ -8,6 +8,7 @@ import { auditFromRequest } from "@/lib/audit";
 import { resolveManagerApproval } from "@/lib/manager-pin";
 import { voidOrder } from "@/lib/services/order-service";
 import { voidOrderSchema } from "@/lib/validators/order.validators";
+import { resolveClientIp } from "@/lib/client-ip";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -32,10 +33,27 @@ export async function POST(request: NextRequest, context: RouteContext) {
     permissions: auth.session.user.permissions,
     permissionName: PERMS.VOID_ORDERS,
     minimumLevel: VOID_MANAGER_LEVEL,
+    managerUserId: parsed.data.managerUserId,
     managerPin: parsed.data.managerPin,
+    clientIp: resolveClientIp(request),
   });
 
   if (!approval.ok) {
+    if (approval.code === "MANAGER_PIN_THROTTLED") {
+      const response = fail(
+        "Manager PIN verification temporarily unavailable",
+        approval.code,
+        429,
+      );
+      response.headers.set(
+        "Retry-After",
+        String(approval.retryAfterSeconds ?? 60),
+      );
+      return response;
+    }
+    if (approval.code === "PIN_SECURITY_UNAVAILABLE") {
+      return fail("PIN security is unavailable", approval.code, 503);
+    }
     const message =
       approval.code === "MANAGER_PIN_REQUIRED"
         ? "Manager PIN required for this action"
@@ -48,7 +66,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       orderId,
       reason: parsed.data.reason,
       approvedByUserId:
-        parsed.data.approvedByUserId ?? approval.approvedByUserId,
+        approval.approvedByUserId,
       reverseStock: parsed.data.reverseStock ?? false,
     });
 

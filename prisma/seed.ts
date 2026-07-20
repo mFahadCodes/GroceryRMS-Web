@@ -15,7 +15,7 @@ import bcrypt from "bcryptjs";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { resolveDatabaseUrl } from "../lib/database-url";
-import { hashPin } from "../lib/pin";
+import { createSecurePinHash } from "../lib/services/pin-security-service";
 import { bootstrapAdministrator } from "./seed/bootstrap-admin";
 import { SESSION_REVOCATION_REASONS } from "../lib/security/auth-constants";
 import { invalidateUsersForRoleChange } from "../lib/security/session-invalidation";
@@ -312,7 +312,7 @@ async function seedAdminUser(prisma: PrismaClient, adminRoleId: number) {
       BOOTSTRAP_ADMIN_PIN: process.env.BOOTSTRAP_ADMIN_PIN,
     },
     hashPassword: (password) => bcrypt.hash(password, 12),
-    hashPin,
+    hashPin: createSecurePinHash,
     transaction: (operation) =>
       prisma.$transaction((transaction) =>
         operation({
@@ -337,6 +337,12 @@ async function seedAdminUser(prisma: PrismaClient, adminRoleId: number) {
               },
               select: { id: true },
             }),
+          updateAdministratorPin: async (userId, pinHash) => {
+            await transaction.user.update({
+              where: { id: userId },
+              data: { pin: pinHash },
+            });
+          },
         }),
       ),
   });

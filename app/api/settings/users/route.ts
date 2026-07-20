@@ -6,6 +6,7 @@ import { fail, ok } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
 import { listUsers, createUser } from "@/lib/services/settings-service";
 import { createUserSchema } from "@/lib/validators/settings.validators";
+import { ServiceError } from "@/lib/api/service-error";
 
 export async function GET(_request: NextRequest) {
   const auth = await requirePermission(PERMS.MANAGE_USERS_ROLES, 1);
@@ -21,7 +22,17 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
-  const created = await createUser(parsed.data);
+  let created;
+  try {
+    created = await createUser(parsed.data, {
+      actorUserId: auth.session.user.id,
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
+    return fail("Failed to create user", "CREATE_USER_FAILED", 500);
+  }
   await auditFromRequest(request, {
     userId: auth.session.user.id,
     action: "CREATE_USER",
