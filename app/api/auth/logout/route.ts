@@ -1,17 +1,26 @@
 import { signOut } from "@/lib/auth";
-import { requireSession } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
+import { prisma } from "@/lib/prisma";
+import { SESSION_REVOCATION_REASONS } from "@/lib/security/auth-constants";
+import { readServerAuthToken } from "@/lib/security/auth-token";
+import { revokeCurrentSession } from "@/lib/security/session-invalidation";
 
-export async function POST() {
-  const auth = await requireSession();
-  if (auth.error) return auth.error;
-
+export async function POST(request: Request) {
   try {
+    const token = await readServerAuthToken(request);
+    if (typeof token?.sessionId === "string" && typeof token.id === "number") {
+      await revokeCurrentSession(prisma, {
+        sessionId: token.sessionId,
+        userId: token.id,
+        reason: SESSION_REVOCATION_REASONS.LOGOUT,
+      });
+    }
+
     await signOut({ redirect: false });
     return ok({ loggedOut: true });
-  } catch (error) {
+  } catch {
     return fail(
-      error instanceof Error ? error.message : "Logout failed",
+      "Logout failed",
       "LOGOUT_FAILED",
       500,
     );

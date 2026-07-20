@@ -34,12 +34,24 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
   const updated = await updateUser(userId, parsed.data);
+  const auditValues = {
+    ...(parsed.data.username !== undefined ? { username: parsed.data.username } : {}),
+    ...(parsed.data.fullName !== undefined ? { fullName: parsed.data.fullName } : {}),
+    ...(parsed.data.roleId !== undefined ? { roleId: parsed.data.roleId } : {}),
+    ...(parsed.data.phone !== undefined ? { phone: parsed.data.phone } : {}),
+    ...(parsed.data.email !== undefined ? { email: parsed.data.email } : {}),
+    ...(parsed.data.isActive !== undefined
+      ? { isActive: parsed.data.isActive }
+      : {}),
+    ...(parsed.data.password !== undefined ? { passwordChanged: true } : {}),
+    ...(parsed.data.pin !== undefined ? { pinChanged: true } : {}),
+  };
   await auditFromRequest(request, {
     userId: auth.session.user.id,
     action: "UPDATE_USER",
     tableName: "users",
     recordId: userId,
-    newValues: parsed.data,
+    newValues: auditValues,
   });
   return ok(updated);
 }

@@ -35,7 +35,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       return fail(error.message, error.code, error.status);
     }
     return fail(
-      error instanceof Error ? error.message : "Failed to force logout session",
+      "Failed to force logout session",
       "FORCE_LOGOUT_FAILED",
       500,
     );

@@ -9,7 +9,7 @@ type AuthResult =
 
 export async function requireSession(): Promise<AuthResult> {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user || session.expired) {
     return { error: fail("Unauthorized", "UNAUTHORIZED", 401) };
   }
   return { session };

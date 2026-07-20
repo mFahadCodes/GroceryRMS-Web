@@ -141,6 +141,7 @@ model User {
   passwordHash String    @map("password_hash")
   pin          String?
   roleId       Int       @map("role_id")
+  authVersion  Int       @default(1) @map("auth_version")
   phone        String?
   email        String?
   lastLoginAt  DateTime? @map("last_login_at")
@@ -200,15 +201,19 @@ model RolePermission {
 }
 
 model UserSession {
-  id         Int       @id @default(autoincrement())
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
-  isActive   Boolean   @default(true) @map("is_active")
-  userId     Int       @map("user_id")
-  terminalId Int?      @map("terminal_id")
-  loginAt    DateTime  @default(now()) @map("login_at")
-  logoutAt   DateTime? @map("logout_at")
-  ipAddress  String?   @map("ip_address")
+  id            Int       @id @default(autoincrement())
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  isActive      Boolean   @default(true) @map("is_active")
+  sessionId     String?   @unique @default(cuid()) @map("session_id")
+  userId        Int       @map("user_id")
+  terminalId    Int?      @map("terminal_id")
+  authVersion   Int?      @map("auth_version")
+  loginAt       DateTime  @default(now()) @map("login_at")
+  expiresAt     DateTime? @map("expires_at")
+  logoutAt      DateTime? @map("logout_at")
+  revokedReason String?   @map("revoked_reason")
+  ipAddress     String?   @map("ip_address")
 
   user     User      @relation(fields: [userId], references: [id], onDelete: NoAction)
   terminal Terminal? @relation(fields: [terminalId], references: [id], onDelete: NoAction)
