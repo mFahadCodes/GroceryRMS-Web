@@ -1,0 +1,875 @@
+// GroceryRMS — SQLite schema (local dev)
+// Source: GroceryRMS-spec.md §1, §3, §7
+// Money: ALL currency fields are BigInt paisa (1 PKR = 100 paisa)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─── Enums (§7.5 retail transformations) ─────────────────────────────────────
+
+enum OrderType {
+  WalkIn
+  Pickup
+  Delivery
+  Refund
+}
+
+enum OrderStatus {
+  Open
+  PartiallyPaid
+  Packed
+  OutForDelivery
+  Delivered
+  Closed
+  Void
+}
+
+enum PaymentStatus {
+  Pending
+  Partial
+  Paid
+  Refunded
+}
+
+enum DiscountType {
+  Percentage
+  FixedAmount
+  BuyXGetY
+}
+
+enum StockMovementType {
+  Purchase
+  Consumption
+  Waste
+  Adjustment
+  Sale
+  Return
+}
+
+enum EmployeeCategory {
+  Floor
+  Cashier
+  Delivery
+  Management
+  Warehouse
+  Other
+}
+
+enum EmploymentType {
+  FullTime
+  PartTime
+  Contract
+  Daily
+}
+
+enum PayrollStatus {
+  Pending
+  Paid
+  Partial
+}
+
+enum CustomerTier {
+  Regular
+  Silver
+  Gold
+  Platinum
+}
+
+enum LoyaltyTransactionType {
+  Earn
+  Redeem
+  Adjust
+  Expire
+}
+
+enum CashDrawerLogType {
+  Sale
+  Refund
+  PayIn
+  PayOut
+  Tip
+}
+
+enum PrinterType {
+  Receipt
+  Label
+  Report
+}
+
+enum ConnectionType {
+  USB
+  Network
+  Bluetooth
+  Serial
+}
+
+enum SyncStatus {
+  Pending
+  Syncing
+  Synced
+  Failed
+}
+
+enum PurchaseOrderStatus {
+  Draft
+  Ordered
+  PartialReceived
+  Received
+  Cancelled
+}
+
+enum StockTakeStatus {
+  InProgress
+  Completed
+  Cancelled
+}
+
+// ─── Auth & security ─────────────────────────────────────────────────────────
+
+model User {
+  id           Int       @id @default(autoincrement())
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  isActive     Boolean   @default(true) @map("is_active")
+  username     String    @unique
+  fullName     String    @map("full_name")
+  passwordHash String    @map("password_hash")
+  pin          String?
+  roleId       Int       @map("role_id")
+  phone        String?
+  email        String?
+  lastLoginAt  DateTime? @map("last_login_at")
+
+  role                  Role            @relation(fields: [roleId], references: [id], onDelete: NoAction)
+  sessions              UserSession[]
+  auditLogs             AuditLog[]
+  employees             Employee[]
+  ordersAsCashier       Order[]         @relation("OrderCashier")
+  ordersApproved        Order[]         @relation("OrderApprovedBy")
+  stockMovements        StockMovement[]
+  cashDrawerLogs        CashDrawerLog[]
+  shifts                Shift[]
+  stockTakes            StockTake[]
+
+  @@map("users")
+}
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  name        String   @unique
+  description String?
+
+  rolePermissions RolePermission[]
+  users           User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  name        String
+  module      String?
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       Int @map("role_id")
+  permissionId Int @map("permission_id")
+  accessLevel  Int @default(5) @map("access_level")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: NoAction)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: NoAction)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserSession {
+  id         Int       @id @default(autoincrement())
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  isActive   Boolean   @default(true) @map("is_active")
+  userId     Int       @map("user_id")
+  terminalId Int?      @map("terminal_id")
+  loginAt    DateTime  @default(now()) @map("login_at")
+  logoutAt   DateTime? @map("logout_at")
+  ipAddress  String?   @map("ip_address")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: NoAction)
+  terminal Terminal? @relation(fields: [terminalId], references: [id], onDelete: NoAction)
+
+  @@map("user_sessions")
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  isActive   Boolean  @default(true) @map("is_active")
+  userId     Int?     @map("user_id")
+  action     String
+  tableName  String?  @map("table_name")
+  recordId   Int?     @map("record_id")
+  oldValues  String?  @map("old_values")
+  newValues  String?  @map("new_values")
+  ipAddress  String?  @map("ip_address")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@map("audit_logs")
+}
+
+// ─── Catalog (Category → ProductCategory, MenuItem → Product) ────────────────
+
+model ProductCategory {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  isActive     Boolean  @default(true) @map("is_active")
+  name         String
+  description  String?
+  parentId     Int?     @map("parent_id")
+  displayOrder Int      @default(0) @map("display_order")
+  imagePath    String?  @map("image_path")
+
+  parent            ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: NoAction)
+  children          ProductCategory[] @relation("CategoryTree")
+  products          Product[]
+  promotionBundles  PromotionBundle[]
+
+  @@map("product_categories")
+}
+
+model Product {
+  id            Int      @id @default(autoincrement())
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  isActive      Boolean  @default(true) @map("is_active")
+  name          String
+  description   String?
+  sku           String?
+  barcode       String?
+  basePrice     BigInt   @map("base_price")
+  costPrice     BigInt   @map("cost_price")
+  categoryId    Int      @map("category_id")
+  taxRateId     Int?     @map("tax_rate_id")
+  imagePath     String?  @map("image_path")
+  maxDiscount   BigInt   @default(0) @map("max_discount")
+  displayOrder  Int      @default(0) @map("display_order")
+  // §7.4 retail extensions (Ingredient merged into Product)
+  unitOfMeasure String   @default("ea") @map("unit_of_measure")
+  isWeighted    Boolean  @default(false) @map("is_weighted")
+  currentStock  Decimal  @default(0) @map("current_stock")
+  reorderLevel  Decimal  @default(0) @map("reorder_level")
+  expiryDate    DateTime? @map("expiry_date")
+  batchNumber   String?  @map("batch_number")
+  supplierId    Int?     @map("supplier_id")
+
+  category              ProductCategory       @relation(fields: [categoryId], references: [id], onDelete: NoAction)
+  taxRate               TaxRate?              @relation(fields: [taxRateId], references: [id], onDelete: NoAction)
+  supplier              Supplier?             @relation(fields: [supplierId], references: [id], onDelete: NoAction)
+  variants              ProductVariant[]
+  orderItems            OrderItem[]
+  stockMovements        StockMovement[]
+  promotionBundleItems  PromotionBundleItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  stockTakeItems        StockTakeItem[]
+
+  @@index([categoryId, isActive])
+  @@index([sku])
+  @@index([barcode])
+  @@map("products")
+}
+
+model ProductVariant {
+  id            Int      @id @default(autoincrement())
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  isActive      Boolean  @default(true) @map("is_active")
+  productId     Int      @map("product_id")
+  name          String
+  priceOverride BigInt   @map("price_override")
+  sku           String?
+  barcode       String?
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: NoAction)
+  orderItems OrderItem[]
+
+  @@map("product_variants")
+}
+
+model TaxRate {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  name        String
+  rate        Decimal
+  isInclusive Boolean  @default(false) @map("is_inclusive")
+
+  products Product[]
+  orders   Order[]
+
+  @@map("tax_rates")
+}
+
+model Discount {
+  id                Int          @id @default(autoincrement())
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  isActive          Boolean      @default(true) @map("is_active")
+  name              String
+  type              DiscountType
+  value             Decimal
+  minOrderAmount    BigInt       @default(0) @map("min_order_amount")
+  maxDiscountAmount BigInt       @default(0) @map("max_discount_amount")
+  startDate         DateTime?    @map("start_date")
+  endDate           DateTime?    @map("end_date")
+  requiresApproval  Boolean      @default(false) @map("requires_approval")
+  code              String?
+
+  @@map("discounts")
+}
+
+model PromotionBundle {
+  id            Int      @id @default(autoincrement())
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  isActive      Boolean  @default(true) @map("is_active")
+  name          String
+  description   String?
+  dealPrice     BigInt   @map("deal_price")
+  originalPrice BigInt   @map("original_price")
+  displayOrder  Int      @default(0) @map("display_order")
+  imagePath     String?  @map("image_path")
+  categoryId    Int?     @map("category_id")
+
+  category ProductCategory?      @relation(fields: [categoryId], references: [id], onDelete: NoAction)
+  items    PromotionBundleItem[]
+
+  @@map("promotion_bundles")
+}
+
+model PromotionBundleItem {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  isActive  Boolean  @default(true) @map("is_active")
+  bundleId  Int      @map("bundle_id")
+  productId Int      @map("product_id")
+  quantity  Int      @default(1)
+
+  bundle  PromotionBundle @relation(fields: [bundleId], references: [id], onDelete: NoAction)
+  product Product         @relation(fields: [productId], references: [id], onDelete: NoAction)
+
+  @@map("promotion_bundle_items")
+}
+
+// ─── Inventory ───────────────────────────────────────────────────────────────
+
+model StockMovement {
+  id         Int               @id @default(autoincrement())
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+  isActive   Boolean           @default(true) @map("is_active")
+  productId  Int               @map("product_id")
+  type       StockMovementType
+  quantity   Decimal
+  costAmount BigInt?           @map("cost_amount")
+  reference  String?
+  notes      String?
+  userId     Int?              @map("user_id")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: NoAction)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@map("stock_movements")
+}
+
+model PurchaseOrder {
+  id           Int                 @id @default(autoincrement())
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  isActive     Boolean             @default(true) @map("is_active")
+  supplierId   Int                 @map("supplier_id")
+  status       PurchaseOrderStatus @default(Draft)
+  orderedAt    DateTime?           @map("ordered_at")
+  expectedDelivery DateTime?       @map("expected_delivery")
+  receivedAt   DateTime?           @map("received_at")
+  notes        String?
+  totalAmount  BigInt              @default(0) @map("total_amount")
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id], onDelete: NoAction)
+  items    PurchaseOrderItem[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id                Int      @id @default(autoincrement())
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  isActive          Boolean  @default(true) @map("is_active")
+  purchaseOrderId   Int      @map("purchase_order_id")
+  productId         Int      @map("product_id")
+  quantityOrdered   Decimal  @map("quantity_ordered")
+  quantityReceived  Decimal  @default(0) @map("quantity_received")
+  unitCost          BigInt   @map("unit_cost")
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: NoAction)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: NoAction)
+
+  @@map("purchase_order_items")
+}
+
+model StockTake {
+  id          Int             @id @default(autoincrement())
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  isActive    Boolean         @default(true) @map("is_active")
+  status      StockTakeStatus @default(InProgress)
+  startedAt   DateTime        @default(now()) @map("started_at")
+  completedAt DateTime?       @map("completed_at")
+  notes       String?
+  userId      Int?            @map("user_id")
+
+  user  User?           @relation(fields: [userId], references: [id], onDelete: NoAction)
+  items StockTakeItem[]
+
+  @@map("stock_takes")
+}
+
+model StockTakeItem {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  isActive     Boolean  @default(true) @map("is_active")
+  stockTakeId  Int      @map("stock_take_id")
+  productId    Int      @map("product_id")
+  expectedQty  Decimal  @map("expected_qty")
+  countedQty   Decimal  @map("counted_qty")
+
+  stockTake StockTake @relation(fields: [stockTakeId], references: [id], onDelete: NoAction)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: NoAction)
+
+  @@map("stock_take_items")
+}
+
+// ─── Orders & payments ───────────────────────────────────────────────────────
+
+model Order {
+  id               Int         @id @default(autoincrement())
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+  isActive         Boolean     @default(true) @map("is_active")
+  orderNumber      String      @unique @map("order_number")
+  orderType        OrderType   @map("order_type")
+  status           OrderStatus @default(Open)
+  customerId       Int?        @map("customer_id")
+  cashierId        Int?        @map("cashier_id")
+  subTotal         BigInt      @default(0) @map("sub_total")
+  taxAmount        BigInt      @default(0) @map("tax_amount")
+  discountAmount   BigInt      @default(0) @map("discount_amount")
+  serviceCharge    BigInt      @default(0) @map("service_charge")
+  grandTotal       BigInt      @default(0) @map("grand_total")
+  adjustment       BigInt      @default(0)
+  notes            String?
+  voidReason       String?     @map("void_reason")
+  approvedByUserId Int?        @map("approved_by_user_id")
+  isSynced         Boolean     @default(false) @map("is_synced")
+  terminalId       Int?        @map("terminal_id")
+  shiftId          Int?        @map("shift_id")
+  taxRateId        Int?        @map("tax_rate_id")
+  // §7.4 retail extensions
+  deliverySlot      DateTime?   @map("delivery_slot")
+  invoiceNumber     String?     @map("invoice_number")
+  originalOrderId   Int?        @map("original_order_id")
+  driverId          Int?        @map("driver_id")
+  deliveredAt       DateTime?   @map("delivered_at")
+  deliveryAddress   String?     @map("delivery_address")
+
+  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction)
+  driver             Employee?           @relation("OrderDriver", fields: [driverId], references: [id], onDelete: NoAction)
+  cashier            User?               @relation("OrderCashier", fields: [cashierId], references: [id], onDelete: NoAction)
+  approvedBy         User?               @relation("OrderApprovedBy", fields: [approvedByUserId], references: [id], onDelete: NoAction)
+  terminal           Terminal?           @relation(fields: [terminalId], references: [id], onDelete: NoAction)
+  shift              Shift?              @relation(fields: [shiftId], references: [id], onDelete: NoAction)
+  taxRate            TaxRate?            @relation(fields: [taxRateId], references: [id], onDelete: NoAction)
+  originalOrder      Order?              @relation("OrderRefund", fields: [originalOrderId], references: [id], onDelete: NoAction)
+  refundOrders       Order[]             @relation("OrderRefund")
+  orderItems         OrderItem[]
+  payments           Payment[]
+  loyaltyTransactions LoyaltyTransaction[]
+  cashDrawerLogs     CashDrawerLog[]
+
+  @@index([status, createdAt])
+  @@index([customerId])
+  @@index([isSynced])
+  @@map("orders")
+}
+
+model OrderItem {
+  id              Int         @id @default(autoincrement())
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  isActive        Boolean     @default(true) @map("is_active")
+  orderId         Int         @map("order_id")
+  productId       Int         @map("product_id")
+  variantId       Int?        @map("variant_id")
+  quantity        Int         @default(1)
+  unitPrice       BigInt      @map("unit_price")
+  lineTotal       BigInt      @map("line_total")
+  notes           String?
+  voidReason      String?     @map("void_reason")
+  status          OrderStatus @default(Open)
+  // §7.4 retail extensions
+  weightKg        Decimal?    @map("weight_kg")
+  scannedBarcode  String?     @map("scanned_barcode")
+
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: NoAction)
+  product Product         @relation(fields: [productId], references: [id], onDelete: NoAction)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Payment {
+  id              Int           @id @default(autoincrement())
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  isActive        Boolean       @default(true) @map("is_active")
+  orderId         Int           @map("order_id")
+  paymentMethodId Int           @map("payment_method_id")
+  amount          BigInt
+  tenderedAmount  BigInt        @map("tendered_amount")
+  changeAmount    BigInt        @map("change_amount")
+  referenceNo     String?       @map("reference_no")
+  status          PaymentStatus @default(Paid)
+
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: NoAction)
+  paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: NoAction)
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+model PaymentMethod {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  isActive  Boolean  @default(true) @map("is_active")
+  name      String
+  code      String?
+  isDigital Boolean  @default(false) @map("is_digital")
+
+  payments Payment[]
+
+  @@map("payment_methods")
+}
+
+// ─── Customers & loyalty ─────────────────────────────────────────────────────
+
+model Customer {
+  id            Int          @id @default(autoincrement())
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  isActive      Boolean      @default(true) @map("is_active")
+  name          String
+  phone         String       @unique
+  email         String?
+  loyaltyPoints BigInt       @default(0) @map("loyalty_points")
+  totalSpent    BigInt       @default(0) @map("total_spent")
+  tier          CustomerTier @default(Regular)
+  notes         String?
+
+  addresses           CustomerAddress[]
+  loyaltyTransactions LoyaltyTransaction[]
+  orders              Order[]
+
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  isActive     Boolean  @default(true) @map("is_active")
+  customerId   Int      @map("customer_id")
+  label        String
+  addressLine1 String   @map("address_line1")
+  addressLine2 String?  @map("address_line2")
+  city         String?
+  area         String?
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean  @default(false) @map("is_default")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction)
+
+  @@map("customer_addresses")
+}
+
+model LoyaltyTransaction {
+  id          Int                    @id @default(autoincrement())
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  isActive    Boolean                @default(true) @map("is_active")
+  customerId  Int                    @map("customer_id")
+  type        LoyaltyTransactionType
+  points      BigInt
+  orderId     Int?                   @map("order_id")
+  description String?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction)
+  order    Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction)
+
+  @@map("loyalty_transactions")
+}
+
+// ─── Suppliers & expenses ────────────────────────────────────────────────────
+
+model Supplier {
+  id            Int      @id @default(autoincrement())
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  isActive      Boolean  @default(true) @map("is_active")
+  name          String
+  contactPerson String?  @map("contact_person")
+  phone         String?
+  email         String?
+  address       String?
+  city          String?
+  notes         String?
+  balance       BigInt   @default(0)
+
+  expenses       SupplierExpense[]
+  purchaseOrders PurchaseOrder[]
+  products       Product[]
+
+  @@map("suppliers")
+}
+
+model SupplierExpense {
+  id            Int      @id @default(autoincrement())
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  isActive      Boolean  @default(true) @map("is_active")
+  supplierId    Int?     @map("supplier_id")
+  description   String
+  amount        BigInt
+  expenseDate   DateTime @default(now()) @map("expense_date")
+  invoiceNumber String?  @map("invoice_number")
+  category      String?
+  isPaid        Boolean  @default(false) @map("is_paid")
+  paidAt        DateTime? @map("paid_at")
+  notes         String?
+
+  supplier Supplier? @relation(fields: [supplierId], references: [id], onDelete: NoAction)
+
+  @@map("supplier_expenses")
+}
+
+// ─── HR & payroll ────────────────────────────────────────────────────────────
+
+model Employee {
+  id               Int              @id @default(autoincrement())
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  isActive         Boolean          @default(true) @map("is_active")
+  name             String
+  phone            String?
+  email            String?
+  cnic             String?
+  address          String?
+  emergencyContact String?          @map("emergency_contact")
+  category         EmployeeCategory @default(Floor)
+  employmentType   EmploymentType   @map("employment_type")
+  designation      String?
+  joiningDate      DateTime         @default(now()) @map("joining_date")
+  leavingDate      DateTime?        @map("leaving_date")
+  basicSalary      BigInt           @default(0) @map("basic_salary")
+  allowances       BigInt           @default(0)
+  deductions       BigInt           @default(0)
+  userId           Int?             @map("user_id")
+
+  user            User?   @relation(fields: [userId], references: [id], onDelete: NoAction)
+  payrolls        Payroll[]
+  deliveredOrders Order[] @relation("OrderDriver")
+
+  @@map("employees")
+}
+
+model Payroll {
+  id           Int           @id @default(autoincrement())
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  isActive     Boolean       @default(true) @map("is_active")
+  employeeId   Int           @map("employee_id")
+  month        Int
+  year         Int
+  basicSalary  BigInt        @map("basic_salary")
+  allowances   BigInt        @default(0)
+  deductions   BigInt        @default(0)
+  bonus        BigInt        @default(0)
+  advance      BigInt        @default(0)
+  netSalary    BigInt        @map("net_salary")
+  status       PayrollStatus @default(Pending)
+  paidAt       DateTime?     @map("paid_at")
+  notes        String?
+  expenseId    Int?          @map("expense_id")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: NoAction)
+
+  @@unique([employeeId, year, month])
+  @@map("payrolls")
+}
+
+// ─── Shifts & cash drawer ────────────────────────────────────────────────────
+
+model Shift {
+  id              Int       @id @default(autoincrement())
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  isActive        Boolean   @default(true) @map("is_active")
+  userId          Int       @map("user_id")
+  terminalId      Int?      @map("terminal_id")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  endedAt         DateTime? @map("ended_at")
+  openingBalance  BigInt    @map("opening_balance")
+  closingBalance  BigInt    @default(0) @map("closing_balance")
+  expectedBalance BigInt    @default(0) @map("expected_balance")
+  discrepancy     BigInt    @default(0)
+  notes           String?
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: NoAction)
+  terminal       Terminal?       @relation(fields: [terminalId], references: [id], onDelete: NoAction)
+  orders         Order[]
+  cashDrawerLogs CashDrawerLog[]
+
+  @@map("shifts")
+}
+
+model CashDrawerLog {
+  id          Int               @id @default(autoincrement())
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  isActive    Boolean           @default(true) @map("is_active")
+  shiftId     Int               @map("shift_id")
+  type        CashDrawerLogType
+  amount      BigInt
+  description String?
+  orderId     Int?              @map("order_id")
+  userId      Int?              @map("user_id")
+
+  shift Shift @relation(fields: [shiftId], references: [id], onDelete: NoAction)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: NoAction)
+  user  User?  @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@map("cash_drawer_logs")
+}
+
+// ─── Reporting & operations ──────────────────────────────────────────────────
+
+model DailySummary {
+  id             Int      @id @default(autoincrement())
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  isActive       Boolean  @default(true) @map("is_active")
+  date           DateTime
+  totalOrders    Int      @default(0) @map("total_orders")
+  totalRevenue   BigInt   @default(0) @map("total_revenue")
+  totalTax       BigInt   @default(0) @map("total_tax")
+  totalDiscount  BigInt   @default(0) @map("total_discount")
+  cashSales      BigInt   @default(0) @map("cash_sales")
+  cardSales      BigInt   @default(0) @map("card_sales")
+  digitalSales   BigInt   @default(0) @map("digital_sales")
+  voidedOrders   Int      @default(0) @map("voided_orders")
+  peakHour       Int      @default(0) @map("peak_hour")
+  terminalId     Int?     @map("terminal_id")
+
+  terminal Terminal? @relation(fields: [terminalId], references: [id], onDelete: NoAction)
+
+  @@unique([date, terminalId])
+  @@map("daily_summaries")
+}
+
+model Terminal {
+  id           Int       @id @default(autoincrement())
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  isActive     Boolean   @default(true) @map("is_active")
+  name         String
+  location     String?
+  machineId    String?   @map("machine_id")
+  lastActiveAt DateTime? @map("last_active_at")
+
+  userSessions  UserSession[]
+  orders        Order[]
+  shifts        Shift[]
+  dailySummaries DailySummary[]
+
+  @@map("terminals")
+}
+
+model Printer {
+  id                Int            @id @default(autoincrement())
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  isActive          Boolean        @default(true) @map("is_active")
+  name              String
+  type              PrinterType
+  connectionType    ConnectionType @map("connection_type")
+  address           String?
+  paperWidth        Int            @default(80) @map("paper_width")
+  isDefault         Boolean        @default(false) @map("is_default")
+  systemPrinterName String?        @map("system_printer_name")
+
+  @@map("printers")
+}
+
+model AppSetting {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  key         String   @unique
+  value       String
+  dataType    String?  @map("data_type")
+  description String?
+  group       String?  @map("setting_group")
+
+  @@map("app_settings")
+}
+
+model SyncQueue {
+  id           Int        @id @default(autoincrement())
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  isActive     Boolean    @default(true) @map("is_active")
+  tableName    String     @map("table_name")
+  recordId     Int        @map("record_id")
+  operation    String
+  payload      String?
+  status       SyncStatus @default(Pending)
+  retries      Int        @default(0)
+  errorMessage String?    @map("error_message")
+
+  @@index([status, createdAt])
+  @@map("sync_queue")
+}
