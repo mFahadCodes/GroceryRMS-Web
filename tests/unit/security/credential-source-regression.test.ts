@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -32,6 +32,7 @@ function trackedTextFiles(): string[] {
   )
     .split("\0")
     .filter(Boolean)
+    .filter((file) => existsSync(path.join(process.cwd(), file)))
     .filter((file) => {
       if (file === ".env.example" || file === ".env.test.example") return true;
       if (file === "package-lock.json") return false;
@@ -110,7 +111,11 @@ describe("tracked credential source regression scan", () => {
       const source = readFileSync(path.join(process.cwd(), file), "utf8");
       return source
         .split(/\r?\n/)
-        .filter((line) => /^(?:BOOTSTRAP|SMOKE)_ADMIN_(?:USERNAME|PASSWORD|PIN)=.+/.test(line))
+        .filter((line) =>
+          /^(?:(?:BOOTSTRAP|SMOKE)_ADMIN_(?:USERNAME|PASSWORD|PIN)|PIN_PEPPER)=.+/.test(
+            line,
+          ),
+        )
         .map(() => `${file}: plaintext credential example`);
     });
 

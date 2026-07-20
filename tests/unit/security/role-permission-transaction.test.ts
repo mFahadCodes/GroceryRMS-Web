@@ -20,6 +20,7 @@ const migrations = [
   "prisma/migrations/20260720_000000_baseline/migration.sql",
   "prisma/migrations/20260720_010000_authoritative_sessions/migration.sql",
   "prisma/migrations/20260721_000000_add_password_rotation_state/migration.sql",
+  "prisma/migrations/20260722_000000_add_pin_security_state/migration.sql",
 ].map((migration) => readFileSync(path.resolve(migration), "utf8"));
 const NOW = new Date("2026-07-20T08:00:00.000Z");
 
