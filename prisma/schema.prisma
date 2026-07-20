@@ -132,30 +132,32 @@ enum StockTakeStatus {
 // ─── Auth & security ─────────────────────────────────────────────────────────
 
 model User {
-  id           Int       @id @default(autoincrement())
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  isActive     Boolean   @default(true) @map("is_active")
-  username     String    @unique
-  fullName     String    @map("full_name")
-  passwordHash String    @map("password_hash")
-  pin          String?
-  roleId       Int       @map("role_id")
-  authVersion  Int       @default(1) @map("auth_version")
-  phone        String?
-  email        String?
-  lastLoginAt  DateTime? @map("last_login_at")
+  id                 Int       @id @default(autoincrement())
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  isActive           Boolean   @default(true) @map("is_active")
+  username           String    @unique
+  fullName           String    @map("full_name")
+  passwordHash       String    @map("password_hash")
+  pin                String?
+  roleId             Int       @map("role_id")
+  authVersion        Int       @default(1) @map("auth_version")
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  passwordChangedAt  DateTime? @map("password_changed_at")
+  phone              String?
+  email              String?
+  lastLoginAt        DateTime? @map("last_login_at")
 
-  role                  Role            @relation(fields: [roleId], references: [id], onDelete: NoAction)
-  sessions              UserSession[]
-  auditLogs             AuditLog[]
-  employees             Employee[]
-  ordersAsCashier       Order[]         @relation("OrderCashier")
-  ordersApproved        Order[]         @relation("OrderApprovedBy")
-  stockMovements        StockMovement[]
-  cashDrawerLogs        CashDrawerLog[]
-  shifts                Shift[]
-  stockTakes            StockTake[]
+  role            Role            @relation(fields: [roleId], references: [id], onDelete: NoAction)
+  sessions        UserSession[]
+  auditLogs       AuditLog[]
+  employees       Employee[]
+  ordersAsCashier Order[]         @relation("OrderCashier")
+  ordersApproved  Order[]         @relation("OrderApprovedBy")
+  stockMovements  StockMovement[]
+  cashDrawerLogs  CashDrawerLog[]
+  shifts          Shift[]
+  stockTakes      StockTake[]
 
   @@map("users")
 }
@@ -222,17 +224,17 @@ model UserSession {
 }
 
 model AuditLog {
-  id         Int      @id @default(autoincrement())
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-  isActive   Boolean  @default(true) @map("is_active")
-  userId     Int?     @map("user_id")
-  action     String
-  tableName  String?  @map("table_name")
-  recordId   Int?     @map("record_id")
-  oldValues  String?  @map("old_values")
-  newValues  String?  @map("new_values")
-  ipAddress  String?  @map("ip_address")
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  isActive  Boolean  @default(true) @map("is_active")
+  userId    Int?     @map("user_id")
+  action    String
+  tableName String?  @map("table_name")
+  recordId  Int?     @map("record_id")
+  oldValues String?  @map("old_values")
+  newValues String?  @map("new_values")
+  ipAddress String?  @map("ip_address")
 
   user User? @relation(fields: [userId], references: [id], onDelete: NoAction)
 
@@ -252,48 +254,48 @@ model ProductCategory {
   displayOrder Int      @default(0) @map("display_order")
   imagePath    String?  @map("image_path")
 
-  parent            ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: NoAction)
-  children          ProductCategory[] @relation("CategoryTree")
-  products          Product[]
-  promotionBundles  PromotionBundle[]
+  parent           ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: NoAction)
+  children         ProductCategory[] @relation("CategoryTree")
+  products         Product[]
+  promotionBundles PromotionBundle[]
 
   @@map("product_categories")
 }
 
 model Product {
-  id            Int      @id @default(autoincrement())
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  isActive      Boolean  @default(true) @map("is_active")
+  id            Int       @id @default(autoincrement())
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  isActive      Boolean   @default(true) @map("is_active")
   name          String
   description   String?
   sku           String?
   barcode       String?
-  basePrice     BigInt   @map("base_price")
-  costPrice     BigInt   @map("cost_price")
-  categoryId    Int      @map("category_id")
-  taxRateId     Int?     @map("tax_rate_id")
-  imagePath     String?  @map("image_path")
-  maxDiscount   BigInt   @default(0) @map("max_discount")
-  displayOrder  Int      @default(0) @map("display_order")
+  basePrice     BigInt    @map("base_price")
+  costPrice     BigInt    @map("cost_price")
+  categoryId    Int       @map("category_id")
+  taxRateId     Int?      @map("tax_rate_id")
+  imagePath     String?   @map("image_path")
+  maxDiscount   BigInt    @default(0) @map("max_discount")
+  displayOrder  Int       @default(0) @map("display_order")
   // §7.4 retail extensions (Ingredient merged into Product)
-  unitOfMeasure String   @default("ea") @map("unit_of_measure")
-  isWeighted    Boolean  @default(false) @map("is_weighted")
-  currentStock  Decimal  @default(0) @map("current_stock")
-  reorderLevel  Decimal  @default(0) @map("reorder_level")
+  unitOfMeasure String    @default("ea") @map("unit_of_measure")
+  isWeighted    Boolean   @default(false) @map("is_weighted")
+  currentStock  Decimal   @default(0) @map("current_stock")
+  reorderLevel  Decimal   @default(0) @map("reorder_level")
   expiryDate    DateTime? @map("expiry_date")
-  batchNumber   String?  @map("batch_number")
-  supplierId    Int?     @map("supplier_id")
+  batchNumber   String?   @map("batch_number")
+  supplierId    Int?      @map("supplier_id")
 
-  category              ProductCategory       @relation(fields: [categoryId], references: [id], onDelete: NoAction)
-  taxRate               TaxRate?              @relation(fields: [taxRateId], references: [id], onDelete: NoAction)
-  supplier              Supplier?             @relation(fields: [supplierId], references: [id], onDelete: NoAction)
-  variants              ProductVariant[]
-  orderItems            OrderItem[]
-  stockMovements        StockMovement[]
-  promotionBundleItems  PromotionBundleItem[]
-  purchaseOrderItems    PurchaseOrderItem[]
-  stockTakeItems        StockTakeItem[]
+  category             ProductCategory       @relation(fields: [categoryId], references: [id], onDelete: NoAction)
+  taxRate              TaxRate?              @relation(fields: [taxRateId], references: [id], onDelete: NoAction)
+  supplier             Supplier?             @relation(fields: [supplierId], references: [id], onDelete: NoAction)
+  variants             ProductVariant[]
+  orderItems           OrderItem[]
+  stockMovements       StockMovement[]
+  promotionBundleItems PromotionBundleItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
+  stockTakeItems       StockTakeItem[]
 
   @@index([categoryId, isActive])
   @@index([sku])
@@ -407,17 +409,17 @@ model StockMovement {
 }
 
 model PurchaseOrder {
-  id           Int                 @id @default(autoincrement())
-  createdAt    DateTime            @default(now()) @map("created_at")
-  updatedAt    DateTime            @updatedAt @map("updated_at")
-  isActive     Boolean             @default(true) @map("is_active")
-  supplierId   Int                 @map("supplier_id")
-  status       PurchaseOrderStatus @default(Draft)
-  orderedAt    DateTime?           @map("ordered_at")
-  expectedDelivery DateTime?       @map("expected_delivery")
-  receivedAt   DateTime?           @map("received_at")
-  notes        String?
-  totalAmount  BigInt              @default(0) @map("total_amount")
+  id               Int                 @id @default(autoincrement())
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+  isActive         Boolean             @default(true) @map("is_active")
+  supplierId       Int                 @map("supplier_id")
+  status           PurchaseOrderStatus @default(Draft)
+  orderedAt        DateTime?           @map("ordered_at")
+  expectedDelivery DateTime?           @map("expected_delivery")
+  receivedAt       DateTime?           @map("received_at")
+  notes            String?
+  totalAmount      BigInt              @default(0) @map("total_amount")
 
   supplier Supplier            @relation(fields: [supplierId], references: [id], onDelete: NoAction)
   items    PurchaseOrderItem[]
@@ -426,15 +428,15 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-  id                Int      @id @default(autoincrement())
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-  isActive          Boolean  @default(true) @map("is_active")
-  purchaseOrderId   Int      @map("purchase_order_id")
-  productId         Int      @map("product_id")
-  quantityOrdered   Decimal  @map("quantity_ordered")
-  quantityReceived  Decimal  @default(0) @map("quantity_received")
-  unitCost          BigInt   @map("unit_cost")
+  id               Int      @id @default(autoincrement())
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  isActive         Boolean  @default(true) @map("is_active")
+  purchaseOrderId  Int      @map("purchase_order_id")
+  productId        Int      @map("product_id")
+  quantityOrdered  Decimal  @map("quantity_ordered")
+  quantityReceived Decimal  @default(0) @map("quantity_received")
+  unitCost         BigInt   @map("unit_cost")
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: NoAction)
   product       Product       @relation(fields: [productId], references: [id], onDelete: NoAction)
@@ -460,14 +462,14 @@ model StockTake {
 }
 
 model StockTakeItem {
-  id           Int      @id @default(autoincrement())
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-  isActive     Boolean  @default(true) @map("is_active")
-  stockTakeId  Int      @map("stock_take_id")
-  productId    Int      @map("product_id")
-  expectedQty  Decimal  @map("expected_qty")
-  countedQty   Decimal  @map("counted_qty")
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  stockTakeId Int      @map("stock_take_id")
+  productId   Int      @map("product_id")
+  expectedQty Decimal  @map("expected_qty")
+  countedQty  Decimal  @map("counted_qty")
 
   stockTake StockTake @relation(fields: [stockTakeId], references: [id], onDelete: NoAction)
   product   Product   @relation(fields: [productId], references: [id], onDelete: NoAction)
@@ -501,26 +503,26 @@ model Order {
   shiftId          Int?        @map("shift_id")
   taxRateId        Int?        @map("tax_rate_id")
   // §7.4 retail extensions
-  deliverySlot      DateTime?   @map("delivery_slot")
-  invoiceNumber     String?     @map("invoice_number")
-  originalOrderId   Int?        @map("original_order_id")
-  driverId          Int?        @map("driver_id")
-  deliveredAt       DateTime?   @map("delivered_at")
-  deliveryAddress   String?     @map("delivery_address")
+  deliverySlot     DateTime?   @map("delivery_slot")
+  invoiceNumber    String?     @map("invoice_number")
+  originalOrderId  Int?        @map("original_order_id")
+  driverId         Int?        @map("driver_id")
+  deliveredAt      DateTime?   @map("delivered_at")
+  deliveryAddress  String?     @map("delivery_address")
 
-  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction)
-  driver             Employee?           @relation("OrderDriver", fields: [driverId], references: [id], onDelete: NoAction)
-  cashier            User?               @relation("OrderCashier", fields: [cashierId], references: [id], onDelete: NoAction)
-  approvedBy         User?               @relation("OrderApprovedBy", fields: [approvedByUserId], references: [id], onDelete: NoAction)
-  terminal           Terminal?           @relation(fields: [terminalId], references: [id], onDelete: NoAction)
-  shift              Shift?              @relation(fields: [shiftId], references: [id], onDelete: NoAction)
-  taxRate            TaxRate?            @relation(fields: [taxRateId], references: [id], onDelete: NoAction)
-  originalOrder      Order?              @relation("OrderRefund", fields: [originalOrderId], references: [id], onDelete: NoAction)
-  refundOrders       Order[]             @relation("OrderRefund")
-  orderItems         OrderItem[]
-  payments           Payment[]
+  customer            Customer?            @relation(fields: [customerId], references: [id], onDelete: NoAction)
+  driver              Employee?            @relation("OrderDriver", fields: [driverId], references: [id], onDelete: NoAction)
+  cashier             User?                @relation("OrderCashier", fields: [cashierId], references: [id], onDelete: NoAction)
+  approvedBy          User?                @relation("OrderApprovedBy", fields: [approvedByUserId], references: [id], onDelete: NoAction)
+  terminal            Terminal?            @relation(fields: [terminalId], references: [id], onDelete: NoAction)
+  shift               Shift?               @relation(fields: [shiftId], references: [id], onDelete: NoAction)
+  taxRate             TaxRate?             @relation(fields: [taxRateId], references: [id], onDelete: NoAction)
+  originalOrder       Order?               @relation("OrderRefund", fields: [originalOrderId], references: [id], onDelete: NoAction)
+  refundOrders        Order[]              @relation("OrderRefund")
+  orderItems          OrderItem[]
+  payments            Payment[]
   loyaltyTransactions LoyaltyTransaction[]
-  cashDrawerLogs     CashDrawerLog[]
+  cashDrawerLogs      CashDrawerLog[]
 
   @@index([status, createdAt])
   @@index([customerId])
@@ -529,22 +531,22 @@ model Order {
 }
 
 model OrderItem {
-  id              Int         @id @default(autoincrement())
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
-  isActive        Boolean     @default(true) @map("is_active")
-  orderId         Int         @map("order_id")
-  productId       Int         @map("product_id")
-  variantId       Int?        @map("variant_id")
-  quantity        Int         @default(1)
-  unitPrice       BigInt      @map("unit_price")
-  lineTotal       BigInt      @map("line_total")
-  notes           String?
-  voidReason      String?     @map("void_reason")
-  status          OrderStatus @default(Open)
+  id             Int         @id @default(autoincrement())
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  isActive       Boolean     @default(true) @map("is_active")
+  orderId        Int         @map("order_id")
+  productId      Int         @map("product_id")
+  variantId      Int?        @map("variant_id")
+  quantity       Int         @default(1)
+  unitPrice      BigInt      @map("unit_price")
+  lineTotal      BigInt      @map("line_total")
+  notes          String?
+  voidReason     String?     @map("void_reason")
+  status         OrderStatus @default(Open)
   // §7.4 retail extensions
-  weightKg        Decimal?    @map("weight_kg")
-  scannedBarcode  String?     @map("scanned_barcode")
+  weightKg       Decimal?    @map("weight_kg")
+  scannedBarcode String?     @map("scanned_barcode")
 
   order   Order           @relation(fields: [orderId], references: [id], onDelete: NoAction)
   product Product         @relation(fields: [productId], references: [id], onDelete: NoAction)
@@ -671,17 +673,17 @@ model Supplier {
 }
 
 model SupplierExpense {
-  id            Int      @id @default(autoincrement())
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  isActive      Boolean  @default(true) @map("is_active")
-  supplierId    Int?     @map("supplier_id")
+  id            Int       @id @default(autoincrement())
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  isActive      Boolean   @default(true) @map("is_active")
+  supplierId    Int?      @map("supplier_id")
   description   String
   amount        BigInt
-  expenseDate   DateTime @default(now()) @map("expense_date")
-  invoiceNumber String?  @map("invoice_number")
+  expenseDate   DateTime  @default(now()) @map("expense_date")
+  invoiceNumber String?   @map("invoice_number")
   category      String?
-  isPaid        Boolean  @default(false) @map("is_paid")
+  isPaid        Boolean   @default(false) @map("is_paid")
   paidAt        DateTime? @map("paid_at")
   notes         String?
 
@@ -713,31 +715,31 @@ model Employee {
   deductions       BigInt           @default(0)
   userId           Int?             @map("user_id")
 
-  user            User?   @relation(fields: [userId], references: [id], onDelete: NoAction)
+  user            User?     @relation(fields: [userId], references: [id], onDelete: NoAction)
   payrolls        Payroll[]
-  deliveredOrders Order[] @relation("OrderDriver")
+  deliveredOrders Order[]   @relation("OrderDriver")
 
   @@map("employees")
 }
 
 model Payroll {
-  id           Int           @id @default(autoincrement())
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  isActive     Boolean       @default(true) @map("is_active")
-  employeeId   Int           @map("employee_id")
-  month        Int
-  year         Int
-  basicSalary  BigInt        @map("basic_salary")
-  allowances   BigInt        @default(0)
-  deductions   BigInt        @default(0)
-  bonus        BigInt        @default(0)
-  advance      BigInt        @default(0)
-  netSalary    BigInt        @map("net_salary")
-  status       PayrollStatus @default(Pending)
-  paidAt       DateTime?     @map("paid_at")
-  notes        String?
-  expenseId    Int?          @map("expense_id")
+  id          Int           @id @default(autoincrement())
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+  isActive    Boolean       @default(true) @map("is_active")
+  employeeId  Int           @map("employee_id")
+  month       Int
+  year        Int
+  basicSalary BigInt        @map("basic_salary")
+  allowances  BigInt        @default(0)
+  deductions  BigInt        @default(0)
+  bonus       BigInt        @default(0)
+  advance     BigInt        @default(0)
+  netSalary   BigInt        @map("net_salary")
+  status      PayrollStatus @default(Pending)
+  paidAt      DateTime?     @map("paid_at")
+  notes       String?
+  expenseId   Int?          @map("expense_id")
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: NoAction)
 
@@ -782,7 +784,7 @@ model CashDrawerLog {
   orderId     Int?              @map("order_id")
   userId      Int?              @map("user_id")
 
-  shift Shift @relation(fields: [shiftId], references: [id], onDelete: NoAction)
+  shift Shift  @relation(fields: [shiftId], references: [id], onDelete: NoAction)
   order Order? @relation(fields: [orderId], references: [id], onDelete: NoAction)
   user  User?  @relation(fields: [userId], references: [id], onDelete: NoAction)
 
@@ -792,21 +794,21 @@ model CashDrawerLog {
 // ─── Reporting & operations ──────────────────────────────────────────────────
 
 model DailySummary {
-  id             Int      @id @default(autoincrement())
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  isActive       Boolean  @default(true) @map("is_active")
-  date           DateTime
-  totalOrders    Int      @default(0) @map("total_orders")
-  totalRevenue   BigInt   @default(0) @map("total_revenue")
-  totalTax       BigInt   @default(0) @map("total_tax")
-  totalDiscount  BigInt   @default(0) @map("total_discount")
-  cashSales      BigInt   @default(0) @map("cash_sales")
-  cardSales      BigInt   @default(0) @map("card_sales")
-  digitalSales   BigInt   @default(0) @map("digital_sales")
-  voidedOrders   Int      @default(0) @map("voided_orders")
-  peakHour       Int      @default(0) @map("peak_hour")
-  terminalId     Int?     @map("terminal_id")
+  id            Int      @id @default(autoincrement())
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  isActive      Boolean  @default(true) @map("is_active")
+  date          DateTime
+  totalOrders   Int      @default(0) @map("total_orders")
+  totalRevenue  BigInt   @default(0) @map("total_revenue")
+  totalTax      BigInt   @default(0) @map("total_tax")
+  totalDiscount BigInt   @default(0) @map("total_discount")
+  cashSales     BigInt   @default(0) @map("cash_sales")
+  cardSales     BigInt   @default(0) @map("card_sales")
+  digitalSales  BigInt   @default(0) @map("digital_sales")
+  voidedOrders  Int      @default(0) @map("voided_orders")
+  peakHour      Int      @default(0) @map("peak_hour")
+  terminalId    Int?     @map("terminal_id")
 
   terminal Terminal? @relation(fields: [terminalId], references: [id], onDelete: NoAction)
 
@@ -824,9 +826,9 @@ model Terminal {
   machineId    String?   @map("machine_id")
   lastActiveAt DateTime? @map("last_active_at")
 
-  userSessions  UserSession[]
-  orders        Order[]
-  shifts        Shift[]
+  userSessions   UserSession[]
+  orders         Order[]
+  shifts         Shift[]
   dailySummaries DailySummary[]
 
   @@map("terminals")

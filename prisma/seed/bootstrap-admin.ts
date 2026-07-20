@@ -14,6 +14,8 @@ export interface BootstrapAdministratorCreateInput {
   pinHash: string | null;
   roleId: number;
   isActive: true;
+  mustChangePassword: true;
+  passwordChangedAt: null;
 }
 
 export interface BootstrapAdministratorStore {
@@ -122,6 +124,8 @@ export async function bootstrapAdministrator(
       pinHash,
       roleId: dependencies.adminRoleId,
       isActive: true,
+      mustChangePassword: true,
+      passwordChangedAt: null,
     });
 
     return {
