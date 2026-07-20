@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "@prisma/client";
@@ -27,41 +27,52 @@ function removeDatabase() {
 }
 
 describe("role-permission invalidation transaction", () => {
-  let prisma: PrismaClient;
+  let prisma: PrismaClient | undefined;
+
+  function getPrisma(): PrismaClient {
+    if (!prisma) throw new Error("Disposable Prisma client is not initialized");
+    return prisma;
+  }
 
   beforeAll(() => {
     removeDatabase();
-    const sqlite = new Database(databasePath);
-    for (const migration of migrations) sqlite.exec(migration);
-    sqlite.close();
+    mkdirSync(path.dirname(databasePath), { recursive: true });
+    let sqlite: Database.Database | undefined;
+    try {
+      sqlite = new Database(databasePath);
+      for (const migration of migrations) sqlite.exec(migration);
+    } finally {
+      if (sqlite) sqlite.close();
+    }
     prisma = new PrismaClient({
       adapter: new PrismaBetterSqlite3({ url: databasePath }),
     });
   });
 
   beforeEach(async () => {
-    await prisma.userSession.deleteMany();
-    await prisma.rolePermission.deleteMany();
-    await prisma.user.deleteMany();
-    await prisma.permission.deleteMany();
-    await prisma.role.deleteMany();
+    const client = getPrisma();
+    await client.userSession.deleteMany();
+    await client.rolePermission.deleteMany();
+    await client.user.deleteMany();
+    await client.permission.deleteMany();
+    await client.role.deleteMany();
 
-    await prisma.role.createMany({
+    await client.role.createMany({
       data: [
         { id: 1, name: "Affected role" },
         { id: 2, name: "Other role" },
       ],
     });
-    await prisma.permission.createMany({
+    await client.permission.createMany({
       data: [
         { id: 1, name: "Old permission" },
         { id: 2, name: "New permission" },
       ],
     });
-    await prisma.rolePermission.create({
+    await client.rolePermission.create({
       data: { roleId: 1, permissionId: 1, accessLevel: 5 },
     });
-    await prisma.user.createMany({
+    await client.user.createMany({
       data: [
         {
           id: 7,
@@ -86,7 +97,7 @@ describe("role-permission invalidation transaction", () => {
         },
       ],
     });
-    await prisma.userSession.createMany({
+    await client.userSession.createMany({
       data: [7, 8, 9].map((userId) => ({
         sessionId: `test_session_${userId}_abcdefghijklmnop`,
         userId,
@@ -98,12 +109,15 @@ describe("role-permission invalidation transaction", () => {
   });
 
   afterAll(async () => {
-    await prisma.$disconnect();
+    if (prisma) {
+      await prisma.$disconnect();
+      prisma = undefined;
+    }
     removeDatabase();
   });
 
   async function replaceAffectedRolePermissions(shouldFail = false) {
-    return prisma.$transaction(async (transaction) => {
+    return getPrisma().$transaction(async (transaction) => {
       await transaction.rolePermission.deleteMany({ where: { roleId: 1 } });
       await transaction.rolePermission.create({
         data: { roleId: 1, permissionId: 2, accessLevel: 4 },
@@ -120,8 +134,9 @@ describe("role-permission invalidation transaction", () => {
 
   it("permission changes invalidate users assigned to the role", async () => {
     await replaceAffectedRolePermissions();
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: 7 } });
-    const session = await prisma.userSession.findFirstOrThrow({
+    const client = getPrisma();
+    const user = await client.user.findUniqueOrThrow({ where: { id: 7 } });
+    const session = await client.userSession.findFirstOrThrow({
       where: { userId: 7 },
     });
     expect(user.authVersion).toBe(2);
@@ -136,7 +151,7 @@ describe("role-permission invalidation transaction", () => {
       affectedUserCount: 2,
       revokedSessionCount: 2,
     });
-    const affected = await prisma.user.findMany({
+    const affected = await getPrisma().user.findMany({
       where: { id: { in: [7, 8] } },
       orderBy: { id: "asc" },
     });
@@ -145,8 +160,9 @@ describe("role-permission invalidation transaction", () => {
 
   it("permission changes do not invalidate users assigned to another role", async () => {
     await replaceAffectedRolePermissions();
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: 9 } });
-    const session = await prisma.userSession.findFirstOrThrow({
+    const client = getPrisma();
+    const user = await client.user.findUniqueOrThrow({ where: { id: 9 } });
+    const session = await client.userSession.findFirstOrThrow({
       where: { userId: 9 },
     });
     expect(user.authVersion).toBe(1);
@@ -155,13 +171,14 @@ describe("role-permission invalidation transaction", () => {
 
   it("permission replacement and invalidation commit together", async () => {
     await replaceAffectedRolePermissions();
+    const client = getPrisma();
     await expect(
-      prisma.rolePermission.findMany({ where: { roleId: 1 } }),
+      client.rolePermission.findMany({ where: { roleId: 1 } }),
     ).resolves.toEqual([
       expect.objectContaining({ permissionId: 2, accessLevel: 4 }),
     ]);
     await expect(
-      prisma.userSession.count({
+      client.userSession.count({
         where: { userId: { in: [7, 8] }, isActive: true },
       }),
     ).resolves.toBe(0);
@@ -171,18 +188,19 @@ describe("role-permission invalidation transaction", () => {
     await expect(replaceAffectedRolePermissions(true)).rejects.toThrow(
       "test transaction rollback",
     );
+    const client = getPrisma();
     await expect(
-      prisma.rolePermission.findMany({ where: { roleId: 1 } }),
+      client.rolePermission.findMany({ where: { roleId: 1 } }),
     ).resolves.toEqual([
       expect.objectContaining({ permissionId: 1, accessLevel: 5 }),
     ]);
-    const users = await prisma.user.findMany({
+    const users = await client.user.findMany({
       where: { id: { in: [7, 8] } },
       orderBy: { id: "asc" },
     });
     expect(users.map((user) => user.authVersion)).toEqual([1, 1]);
     await expect(
-      prisma.userSession.count({
+      client.userSession.count({
         where: { userId: { in: [7, 8] }, isActive: true },
       }),
     ).resolves.toBe(2);

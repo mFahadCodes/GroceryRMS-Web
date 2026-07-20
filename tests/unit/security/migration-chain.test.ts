@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,11 +23,17 @@ function removeDatabase() {
 }
 
 describe("SEC-03A disposable migration chain", () => {
-  let db: Database.Database;
+  let db: Database.Database | undefined;
   let baselineTables: string[];
+
+  function getDatabase(): Database.Database {
+    if (!db) throw new Error("Disposable migration database is not initialized");
+    return db;
+  }
 
   beforeAll(() => {
     removeDatabase();
+    mkdirSync(path.dirname(databasePath), { recursive: true });
     db = new Database(databasePath);
     db.exec(baselineSql);
     baselineTables = db
@@ -57,7 +63,10 @@ describe("SEC-03A disposable migration chain", () => {
   });
 
   afterAll(() => {
-    db.close();
+    if (db) {
+      db.close();
+      db = undefined;
+    }
     removeDatabase();
   });
 
@@ -68,8 +77,11 @@ describe("SEC-03A disposable migration chain", () => {
   });
 
   it("the security migration adds only the required authentication columns", () => {
-    const userColumns = db.prepare("PRAGMA table_info('users')").all() as Column[];
-    const sessionColumns = db
+    const database = getDatabase();
+    const userColumns = database
+      .prepare("PRAGMA table_info('users')")
+      .all() as Column[];
+    const sessionColumns = database
       .prepare("PRAGMA table_info('user_sessions')")
       .all() as Column[];
     expect(userColumns.find((column) => column.name === "auth_version")).toMatchObject({
@@ -87,17 +99,22 @@ describe("SEC-03A disposable migration chain", () => {
   });
 
   it("the baseline upgrade preserves existing users and sessions", () => {
+    const database = getDatabase();
     expect(
-      db.prepare("SELECT id, username, auth_version FROM users WHERE id = 7").get(),
+      database
+        .prepare("SELECT id, username, auth_version FROM users WHERE id = 7")
+        .get(),
     ).toEqual({ id: 7, username: "legacy-user", auth_version: 1 });
     expect(
-      db.prepare("SELECT id, user_id FROM user_sessions WHERE id = 11").get(),
+      database
+        .prepare("SELECT id, user_id FROM user_sessions WHERE id = 11")
+        .get(),
     ).toEqual({ id: 11, user_id: 7 });
   });
 
   it("legacy sessions fail closed through nullable new authority fields", () => {
     expect(
-      db
+      getDatabase()
         .prepare(
           "SELECT session_id, auth_version, expires_at, revoked_reason FROM user_sessions WHERE id = 11",
         )
@@ -111,7 +128,7 @@ describe("SEC-03A disposable migration chain", () => {
   });
 
   it("the security upgrade leaves the domain table set unchanged", () => {
-    const upgradedTables = db
+    const upgradedTables = getDatabase()
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
       )
@@ -121,10 +138,12 @@ describe("SEC-03A disposable migration chain", () => {
   });
 
   it("the opaque session identifier is unique", () => {
-    const indexes = db.prepare("PRAGMA index_list('user_sessions')").all() as Array<{
-      name: string;
-      unique: number;
-    }>;
+    const indexes = getDatabase()
+      .prepare("PRAGMA index_list('user_sessions')")
+      .all() as Array<{
+        name: string;
+        unique: number;
+      }>;
     expect(indexes).toContainEqual(
       expect.objectContaining({
         name: "user_sessions_session_id_key",
