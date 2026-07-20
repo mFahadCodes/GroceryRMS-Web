@@ -24,13 +24,10 @@ export async function listCategoryTree() {
     byParent.set(key, [...(byParent.get(key) ?? []), category]);
   }
 
-  const build = (
-    parentId: number | null,
-  ): Array<
-    (typeof categories)[number] & {
-      children: Array<any>;
-    }
-  > =>
+  type Category = (typeof categories)[number];
+  type CategoryNode = Category & { children: CategoryNode[] };
+
+  const build = (parentId: number | null): CategoryNode[] =>
     (byParent.get(parentId) ?? []).map((category) => ({
       ...category,
       children: build(category.id),
