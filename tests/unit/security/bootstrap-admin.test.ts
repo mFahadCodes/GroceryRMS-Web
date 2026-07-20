@@ -12,6 +12,8 @@ interface TestUser {
   isActive: boolean;
   passwordHash: string;
   pin: string | null;
+  mustChangePassword: boolean;
+  passwordChangedAt: Date | null;
 }
 
 const ADMIN_ROLE_ID = 10;
@@ -54,6 +56,8 @@ function createHarness(
           isActive: input.isActive,
           passwordHash: input.passwordHash,
           pin: input.pinHash,
+          mustChangePassword: input.mustChangePassword,
+          passwordChangedAt: input.passwordChangedAt,
         };
         state.users.push(user);
         return { id: user.id };
@@ -87,6 +91,8 @@ function existingAdministrator(isActive: boolean, id = 1): TestUser {
     isActive,
     passwordHash: `preserved-password-hash-${id}`,
     pin: `preserved-pin-hash-${id}`,
+    mustChangePassword: false,
+    passwordChangedAt: new Date("2026-07-01T00:00:00.000Z"),
   };
 }
 
@@ -154,8 +160,19 @@ describe("first administrator bootstrap", () => {
       isActive: true,
       passwordHash: "test-password-hash",
       pinHash: "test-pin-hash",
+      mustChangePassword: true,
+      passwordChangedAt: null,
     });
     expect(harness.transaction).toHaveBeenCalledOnce();
+  });
+
+  it("marks a newly bootstrapped administrator for rotation", async () => {
+    const harness = createHarness();
+    await bootstrapAdministrator(harness.dependencies);
+    expect(harness.state.users[0]).toMatchObject({
+      mustChangePassword: true,
+      passwordChangedAt: null,
+    });
   });
 
   it("hashes the exact password without passing plaintext to the store", async () => {
@@ -221,6 +238,8 @@ describe("first administrator bootstrap", () => {
       isActive: false,
       passwordHash: "preserved-non-admin-password-hash",
       pin: null,
+      mustChangePassword: false,
+      passwordChangedAt: null,
     };
     const harness = createHarness([existingUser]);
 
@@ -257,7 +276,16 @@ describe("bootstrap idempotency and secret handling", () => {
     expect(harness.state.users[0]).toMatchObject({
       passwordHash: "test-password-hash",
       pin: "test-pin-hash",
+      mustChangePassword: true,
+      passwordChangedAt: null,
     });
+  });
+
+  it("preserves an existing administrator's completed rotation state", async () => {
+    const original = existingAdministrator(true);
+    const harness = createHarness([original], {});
+    await bootstrapAdministrator(harness.dependencies);
+    expect(harness.state.users[0]).toEqual(original);
   });
 
   it("does not expose secrets or hashes in result objects", async () => {

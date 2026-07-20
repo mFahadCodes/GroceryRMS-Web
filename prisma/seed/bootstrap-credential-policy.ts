@@ -1,17 +1,7 @@
-const MINIMUM_PASSWORD_CHARACTERS = 15;
-const MAXIMUM_BCRYPT_BYTES = 72;
+import { validatePasswordPolicy } from "../../lib/security/password-policy";
+
 const MAXIMUM_USERNAME_CHARACTERS = 64;
 const PIN_LENGTH = 4;
-
-const PLACEHOLDER_TERMS = [
-  "password",
-  "administrator",
-  "admin",
-  "changeme",
-  "default",
-  "welcome",
-  "qwerty",
-] as const;
 
 export type BootstrapCredentialFailureCode =
   | "BOOTSTRAP_ADMIN_USERNAME_REQUIRED"
@@ -82,59 +72,19 @@ export function validateBootstrapPassword(
   password: string | undefined,
   username: string,
 ): CredentialValidationResult<string> {
-  if (password === undefined || password.length === 0) {
-    return failure(
-      "BOOTSTRAP_ADMIN_PASSWORD_REQUIRED",
-      "BOOTSTRAP_ADMIN_PASSWORD is required to create the first administrator.",
-    );
-  }
+  const result = validatePasswordPolicy(password, username);
+  if (result.ok) return result;
 
-  if (!password.trim()) {
-    return failure(
-      "BOOTSTRAP_ADMIN_PASSWORD_REQUIRED",
-      "BOOTSTRAP_ADMIN_PASSWORD must not be empty or whitespace-only.",
-    );
-  }
-
-  if (Array.from(password).length < MINIMUM_PASSWORD_CHARACTERS) {
-    return failure(
-      "BOOTSTRAP_ADMIN_PASSWORD_TOO_SHORT",
-      `BOOTSTRAP_ADMIN_PASSWORD must be at least ${MINIMUM_PASSWORD_CHARACTERS} characters.`,
-    );
-  }
-
-  if (Buffer.byteLength(password, "utf8") > MAXIMUM_BCRYPT_BYTES) {
-    return failure(
-      "BOOTSTRAP_ADMIN_PASSWORD_TOO_LONG",
-      `BOOTSTRAP_ADMIN_PASSWORD must be at most ${MAXIMUM_BCRYPT_BYTES} UTF-8 bytes for bcrypt.`,
-    );
-  }
-
-  const comparablePassword = comparableCredential(password);
-  const comparableUsername = comparableCredential(username);
-
-  if (comparablePassword === comparableUsername) {
-    return failure(
-      "BOOTSTRAP_ADMIN_PASSWORD_MATCHES_USERNAME",
-      "BOOTSTRAP_ADMIN_PASSWORD must not equal the administrator username.",
-    );
-  }
-
-  if (isTrivialUsernameVariation(comparablePassword, comparableUsername)) {
-    return failure(
+  const codeByPolicyFailure = {
+    PASSWORD_REQUIRED: "BOOTSTRAP_ADMIN_PASSWORD_REQUIRED",
+    PASSWORD_TOO_SHORT: "BOOTSTRAP_ADMIN_PASSWORD_TOO_SHORT",
+    PASSWORD_TOO_LONG: "BOOTSTRAP_ADMIN_PASSWORD_TOO_LONG",
+    PASSWORD_PLACEHOLDER: "BOOTSTRAP_ADMIN_PASSWORD_PLACEHOLDER",
+    PASSWORD_MATCHES_USERNAME: "BOOTSTRAP_ADMIN_PASSWORD_MATCHES_USERNAME",
+    PASSWORD_TRIVIAL_USERNAME_VARIATION:
       "BOOTSTRAP_ADMIN_PASSWORD_TRIVIAL_USERNAME_VARIATION",
-      "BOOTSTRAP_ADMIN_PASSWORD must not be a trivial variation of the administrator username.",
-    );
-  }
-
-  if (isPlaceholderStyle(comparablePassword)) {
-    return failure(
-      "BOOTSTRAP_ADMIN_PASSWORD_PLACEHOLDER",
-      "BOOTSTRAP_ADMIN_PASSWORD must not be a placeholder-style password.",
-    );
-  }
-
-  return { ok: true, value: password };
+  } as const;
+  return failure(codeByPolicyFailure[result.code], result.message);
 }
 
 export function validateBootstrapPin(
@@ -166,37 +116,6 @@ export function validateBootstrapPin(
   }
 
   return { ok: true, value: pin };
-}
-
-function comparableCredential(value: string): string {
-  return value.toLocaleLowerCase("en-US").replace(/[^a-z0-9]/g, "");
-}
-
-function isPlaceholderStyle(password: string): boolean {
-  if (!password) {
-    return true;
-  }
-
-  let remainder = password;
-  for (const term of [...PLACEHOLDER_TERMS].sort(
-    (left, right) => right.length - left.length,
-  )) {
-    remainder = remainder.replaceAll(term, "");
-  }
-
-  return remainder.length === 0 || /^\d+$/.test(remainder);
-}
-
-function isTrivialUsernameVariation(
-  password: string,
-  username: string,
-): boolean {
-  if (!username || !password.includes(username)) {
-    return false;
-  }
-
-  const remainder = password.replaceAll(username, "");
-  return remainder.length === 0 || /^\d+$/.test(remainder);
 }
 
 function isSequentialPin(pin: string): boolean {

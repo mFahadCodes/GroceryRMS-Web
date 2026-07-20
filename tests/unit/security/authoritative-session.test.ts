@@ -20,6 +20,7 @@ function validRecord(): AuthoritativeSessionRecord {
       id: 7,
       isActive: true,
       authVersion: 3,
+      mustChangePassword: false,
       roleId: 2,
       role: {
         id: 2,
@@ -57,6 +58,7 @@ describe("authoritative session validation", () => {
         userId: 7,
         roleId: 2,
         permissions: ["Manage users & roles:5"],
+        mustChangePassword: false,
       },
     });
   });
@@ -197,4 +199,18 @@ describe("authoritative session validation", () => {
     expect(serialized).not.toContain("pin");
     expect(serialized).not.toContain(SESSION_ID);
   });
+
+  it.each([true, false])(
+    "returns authoritative password-rotation state %s",
+    async (mustChangePassword) => {
+      const record = validRecord();
+      record.user.mustChangePassword = mustChangePassword;
+      await expect(
+        validateAuthoritativeSession(claims(), repository(record), NOW),
+      ).resolves.toMatchObject({
+        ok: true,
+        principal: { mustChangePassword },
+      });
+    },
+  );
 });

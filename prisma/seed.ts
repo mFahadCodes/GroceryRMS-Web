@@ -332,6 +332,8 @@ async function seedAdminUser(prisma: PrismaClient, adminRoleId: number) {
                 pin: input.pinHash,
                 roleId: input.roleId,
                 isActive: input.isActive,
+                mustChangePassword: input.mustChangePassword,
+                passwordChangedAt: input.passwordChangedAt,
               },
               select: { id: true },
             }),
