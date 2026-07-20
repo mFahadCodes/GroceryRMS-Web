@@ -19,6 +19,10 @@ coverage/
 .turbo/
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+.tmp/
+.eslintcache
+test-results/
+playwright-report/
 
 # Environment and secrets
 .env
@@ -28,6 +32,8 @@ tsconfig.tsbuildinfo
 .env.production.local
 .env.*
 !.env.example
+!.env.test.example
+.env.test
 *.pem
 
 # Local databases and SQLite runtime files
