@@ -4,6 +4,7 @@ export const SESSION_REVOCATION_REASONS = {
   LOGOUT: "logout",
   ADMINISTRATOR: "administrator",
   CREDENTIAL_CHANGE: "credential-change",
+  PASSWORD_CHANGE: "password-change",
   ACCOUNT_STATUS_CHANGE: "account-status-change",
   ROLE_CHANGE: "role-change",
   ROLE_PERMISSIONS_CHANGE: "role-permissions-change",

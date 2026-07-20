@@ -131,6 +131,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           permissions,
           sessionId: dbSession.sessionId,
           authVersion: user.authVersion,
+          mustChangePassword: user.mustChangePassword,
         };
       },
     }),

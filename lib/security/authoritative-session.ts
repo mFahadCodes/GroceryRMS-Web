@@ -17,6 +17,7 @@ export interface AuthoritativeSessionRecord {
     id: number;
     isActive: boolean;
     authVersion: number;
+    mustChangePassword: boolean;
     roleId: number;
     role: {
       id: number;
@@ -55,6 +56,7 @@ export function createPrismaAuthoritativeSessionRepository(
               id: true,
               isActive: true,
               authVersion: true,
+              mustChangePassword: true,
               roleId: true,
               role: {
                 select: {
@@ -81,6 +83,7 @@ export interface AuthoritativePrincipal {
   userId: number;
   roleId: number;
   permissions: string[];
+  mustChangePassword: boolean;
 }
 
 export type AuthoritativeSessionFailureReason =
@@ -156,6 +159,7 @@ export async function validateAuthoritativeSession(
     principal: {
       userId,
       roleId: record.user.roleId,
+      mustChangePassword: record.user.mustChangePassword,
       permissions: record.user.role.rolePermissions
         .filter((row) => row.permission.isActive)
         .map((row) => `${row.permission.name}:${row.accessLevel}`),

@@ -20,5 +20,12 @@ export const validatePinSchema = z.object({
   pin: z.string().min(1),
 });
 
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1).max(1024),
+    newPassword: z.string().min(1).max(1024),
+  })
+  .strict();
+
 export type LoginBody = z.infer<typeof loginBodySchema>;
 export type ValidatePinInput = z.infer<typeof validatePinSchema>;

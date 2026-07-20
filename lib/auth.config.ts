@@ -89,6 +89,7 @@ export const authConfig = {
       user.permissions = Array.isArray(token.permissions)
         ? token.permissions
         : [];
+      user.mustChangePassword = token.mustChangePassword === true;
       return session;
     },
   },
