@@ -1,7 +1,14 @@
 import type { NextAuthConfig, Session } from "next-auth";
-import { getIdleTimeoutMinutes, idleTimeoutMs } from "@/lib/idle-timeout";
+import { getIdleTimeoutMinutes } from "@/lib/idle-timeout";
+import { prisma } from "@/lib/prisma";
+import { AUTH_SESSION_MAX_AGE_SECONDS } from "@/lib/security/auth-constants";
+import {
+  createPrismaAuthoritativeSessionRepository,
+} from "@/lib/security/authoritative-session";
+import { updateAuthoritativeJwt } from "@/lib/security/auth-jwt";
 
 const PUBLIC_PATHS = ["/login"];
+const authoritativeSessions = createPrismaAuthoritativeSessionRepository(prisma);
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(
@@ -23,6 +30,7 @@ export const authConfig = {
   },
   session: {
     strategy: "jwt",
+    maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
   },
   trustHost: true,
   providers: [],
@@ -56,30 +64,13 @@ export const authConfig = {
       return isLoggedIn;
     },
     async jwt({ token, user }) {
-      const now = Date.now();
-
-      if (user) {
-        token.id = Number(user.id);
-        token.roleId = user.roleId;
-        token.permissions = user.permissions;
-        token.dbSessionId = user.dbSessionId;
-        token.lastActivityAt = now;
-        token.expired = false;
-        return token;
-      }
-
-      const idleMinutes = await getIdleTimeoutMinutes();
-      const lastActivity =
-        typeof token.lastActivityAt === "number" ? token.lastActivityAt : now;
-
-      if (now - lastActivity > idleTimeoutMs(idleMinutes)) {
-        token.expired = true;
-        return token;
-      }
-
-      token.lastActivityAt = now;
-      token.expired = false;
-      return token;
+      return updateAuthoritativeJwt(
+        { token, user },
+        {
+          repository: authoritativeSessions,
+          getIdleTimeoutMinutes,
+        },
+      );
     },
     session({ session, token }) {
       if (token.expired) {
@@ -98,10 +89,6 @@ export const authConfig = {
       user.permissions = Array.isArray(token.permissions)
         ? token.permissions
         : [];
-      user.dbSessionId =
-        typeof token.dbSessionId === "number"
-          ? token.dbSessionId
-          : Number(token.dbSessionId ?? 0);
       return session;
     },
   },

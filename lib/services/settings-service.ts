@@ -1,6 +1,11 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { hashPin } from "@/lib/pin";
+import { SESSION_REVOCATION_REASONS } from "@/lib/security/auth-constants";
+import {
+  invalidateUserAuthentication,
+  invalidateUsersForRoleChange,
+} from "@/lib/security/session-invalidation";
 
 export async function getAllSettingsGrouped() {
   const rows = await prisma.appSetting.findMany({
@@ -121,15 +126,22 @@ export async function createRole(input: { name: string; description?: string | n
 }
 
 export async function deleteRole(id: number) {
-  const userCount = await prisma.user.count({
-    where: { roleId: id, isActive: true },
-  });
-  if (userCount > 0) {
-    throw new Error("Cannot delete role with assigned users");
-  }
-  return prisma.role.update({
-    where: { id },
-    data: { isActive: false },
+  return prisma.$transaction(async (transaction) => {
+    const userCount = await transaction.user.count({
+      where: { roleId: id, isActive: true },
+    });
+    if (userCount > 0) {
+      throw new Error("Cannot delete role with assigned users");
+    }
+    const role = await transaction.role.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    await invalidateUsersForRoleChange(transaction, {
+      roleId: id,
+      reason: SESSION_REVOCATION_REASONS.ROLE_CHANGE,
+    });
+    return role;
   });
 }
 
@@ -206,22 +218,56 @@ export async function updateUser(id: number, input: {
   email?: string | null;
   isActive?: boolean;
 }) {
-  return prisma.user.update({
-    where: { id },
-    data: {
-      ...(input.username !== undefined ? { username: input.username } : {}),
-      ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
-      ...(input.password !== undefined ? { passwordHash: await bcrypt.hash(input.password, 12) } : {}),
-      ...(input.pin !== undefined ? { pin: input.pin ? hashPin(input.pin) : null } : {}),
-      ...(input.roleId !== undefined ? { roleId: input.roleId } : {}),
-      ...(input.phone !== undefined ? { phone: input.phone } : {}),
-      ...(input.email !== undefined ? { email: input.email } : {}),
-      ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
-    },
+  const passwordHash =
+    input.password !== undefined
+      ? await bcrypt.hash(input.password, 12)
+      : undefined;
+  const pinHash =
+    input.pin !== undefined ? (input.pin ? hashPin(input.pin) : null) : undefined;
+  const data = {
+    ...(input.username !== undefined ? { username: input.username } : {}),
+    ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
+    ...(passwordHash !== undefined ? { passwordHash } : {}),
+    ...(pinHash !== undefined ? { pin: pinHash } : {}),
+    ...(input.roleId !== undefined ? { roleId: input.roleId } : {}),
+    ...(input.phone !== undefined ? { phone: input.phone } : {}),
+    ...(input.email !== undefined ? { email: input.email } : {}),
+    ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+  };
+  const revocationReason =
+    input.password !== undefined || input.pin !== undefined
+      ? SESSION_REVOCATION_REASONS.CREDENTIAL_CHANGE
+      : input.roleId !== undefined
+        ? SESSION_REVOCATION_REASONS.ROLE_CHANGE
+        : input.isActive !== undefined
+          ? SESSION_REVOCATION_REASONS.ACCOUNT_STATUS_CHANGE
+          : null;
+
+  if (!revocationReason) {
+    return prisma.user.update({ where: { id }, data });
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    await transaction.user.update({ where: { id }, data });
+    await invalidateUserAuthentication(transaction, {
+      userId: id,
+      reason: revocationReason,
+    });
+    return transaction.user.findUniqueOrThrow({ where: { id } });
   });
 }
 export async function deleteUser(id: number) {
-  return prisma.user.update({ where: { id }, data: { isActive: false } });
+  return prisma.$transaction(async (transaction) => {
+    await transaction.user.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    await invalidateUserAuthentication(transaction, {
+      userId: id,
+      reason: SESSION_REVOCATION_REASONS.ACCOUNT_STATUS_CHANGE,
+    });
+    return transaction.user.findUniqueOrThrow({ where: { id } });
+  });
 }
 
 export async function replaceRolePermissions(
@@ -235,6 +281,10 @@ export async function replaceRolePermissions(
         data: permissions.map((row) => ({ roleId, permissionId: row.permissionId, accessLevel: row.accessLevel })),
       });
     }
+    await invalidateUsersForRoleChange(tx, {
+      roleId,
+      reason: SESSION_REVOCATION_REASONS.ROLE_PERMISSIONS_CHANGE,
+    });
     return tx.role.findUnique({
       where: { id: roleId },
       include: { rolePermissions: { include: { permission: true } } },

@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       );
     }
     return fail(
-      error instanceof Error ? error.message : "Login failed",
+      "Login failed",
       "LOGIN_FAILED",
       500,
     );

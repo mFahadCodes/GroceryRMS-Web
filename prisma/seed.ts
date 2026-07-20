@@ -17,6 +17,8 @@ import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { resolveDatabaseUrl } from "../lib/database-url";
 import { hashPin } from "../lib/pin";
 import { bootstrapAdministrator } from "./seed/bootstrap-admin";
+import { SESSION_REVOCATION_REASONS } from "../lib/security/auth-constants";
+import { invalidateUsersForRoleChange } from "../lib/security/session-invalidation";
 
 /**
  * Retail permission matrix (24 entries). RPOS restaurant IDs 11 (Manage tables &
@@ -267,29 +269,38 @@ async function seedRolePermissions(
   prisma: PrismaClient,
   roles: { admin: number; manager: number; cashier: number },
 ) {
-  await prisma.rolePermission.deleteMany({
-    where: { roleId: { in: [roles.admin, roles.manager, roles.cashier] } },
+  await prisma.$transaction(async (transaction) => {
+    const roleIds = [roles.admin, roles.manager, roles.cashier];
+    await transaction.rolePermission.deleteMany({
+      where: { roleId: { in: roleIds } },
+    });
+
+    const rows = [
+      ...adminRolePermissions.map((rp) => ({
+        roleId: roles.admin,
+        permissionId: rp.permissionId,
+        accessLevel: rp.accessLevel,
+      })),
+      ...managerRolePermissions.map((rp) => ({
+        roleId: roles.manager,
+        permissionId: rp.permissionId,
+        accessLevel: rp.accessLevel,
+      })),
+      ...cashierRolePermissions.map((rp) => ({
+        roleId: roles.cashier,
+        permissionId: rp.permissionId,
+        accessLevel: rp.accessLevel,
+      })),
+    ];
+
+    await transaction.rolePermission.createMany({ data: rows });
+    for (const roleId of roleIds) {
+      await invalidateUsersForRoleChange(transaction, {
+        roleId,
+        reason: SESSION_REVOCATION_REASONS.ROLE_PERMISSIONS_CHANGE,
+      });
+    }
   });
-
-  const rows = [
-    ...adminRolePermissions.map((rp) => ({
-      roleId: roles.admin,
-      permissionId: rp.permissionId,
-      accessLevel: rp.accessLevel,
-    })),
-    ...managerRolePermissions.map((rp) => ({
-      roleId: roles.manager,
-      permissionId: rp.permissionId,
-      accessLevel: rp.accessLevel,
-    })),
-    ...cashierRolePermissions.map((rp) => ({
-      roleId: roles.cashier,
-      permissionId: rp.permissionId,
-      accessLevel: rp.accessLevel,
-    })),
-  ];
-
-  await prisma.rolePermission.createMany({ data: rows });
 }
 
 async function seedAdminUser(prisma: PrismaClient, adminRoleId: number) {

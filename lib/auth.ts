@@ -7,6 +7,9 @@ import { loadPermissionTokensForRole } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
 import { resolveClientIp } from "@/lib/client-ip";
+import { SESSION_REVOCATION_REASONS } from "@/lib/security/auth-constants";
+import { createAuthoritativeLoginSession } from "@/lib/security/login-session";
+import { revokeCurrentSession } from "@/lib/security/session-invalidation";
 
 type LoginType = "password" | "pin";
 
@@ -36,25 +39,16 @@ async function authenticateWithPin(pin: string) {
   });
 }
 
-export async function recordLogin(userId: number, ipAddress: string) {
-  const loginAt = new Date();
-
-  const dbSession = await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: userId },
-      data: { lastLoginAt: loginAt },
-    });
-
-    return tx.userSession.create({
-      data: {
-        userId,
-        loginAt,
-        ipAddress,
-      },
-    });
+export async function recordLogin(
+  userId: number,
+  authVersion: number,
+  ipAddress: string,
+) {
+  return createAuthoritativeLoginSession(prisma, {
+    userId,
+    authVersion,
+    ipAddress,
   });
-
-  return dbSession;
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -118,9 +112,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        const ipAddress = request ? resolveClientIp(request) : "unknown";
-        const dbSession = await recordLogin(user.id, ipAddress);
         const permissions = await loadPermissionTokensForRole(user.roleId);
+        const ipAddress = request ? resolveClientIp(request) : "unknown";
+        const dbSession = await recordLogin(
+          user.id,
+          user.authVersion,
+          ipAddress,
+        );
+        if (!dbSession.sessionId) {
+          throw new Error("Failed to create authoritative session");
+        }
 
         return {
           id: String(user.id),
@@ -128,7 +129,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: user.email ?? undefined,
           roleId: user.roleId,
           permissions,
-          dbSessionId: dbSession.id,
+          sessionId: dbSession.sessionId,
+          authVersion: user.authVersion,
         };
       },
     }),
@@ -136,18 +138,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   events: {
     async signOut(message) {
       const token = "token" in message ? message.token : null;
-      const dbSessionId = token?.dbSessionId;
+      const sessionId = token?.sessionId;
+      const userId = token?.id;
 
-      if (!dbSessionId) {
+      if (typeof sessionId !== "string" || typeof userId !== "number") {
         return;
       }
 
-      await prisma.userSession.updateMany({
-        where: {
-          id: dbSessionId,
-          logoutAt: null,
-        },
-        data: { logoutAt: new Date() },
+      await revokeCurrentSession(prisma, {
+        sessionId,
+        userId,
+        reason: SESSION_REVOCATION_REASONS.LOGOUT,
       });
     },
   },
