@@ -2,10 +2,8 @@
  * GroceryRMS database seed
  * Source: GroceryRMS-spec.md §3 seed data + PosDbContext.cs RBAC matrix
  *
- * Default admin credentials (change after first login):
- *   username: admin
- *   password: Admin@123
- *   PIN:      1234
+ * The first administrator is bootstrapped from explicit environment variables.
+ * Existing administrator accounts and credentials are preserved on reseed.
  */
 
 import { config } from "dotenv";
@@ -13,15 +11,12 @@ import { config } from "dotenv";
 config({ path: ".env.local", override: true });
 config({ override: true });
 
-import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { resolveDatabaseUrl } from "../lib/database-url";
-
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "Admin@123";
-const ADMIN_PIN = "1234";
+import { hashPin } from "../lib/pin";
+import { bootstrapAdministrator } from "./seed/bootstrap-admin";
 
 /**
  * Retail permission matrix (24 entries). RPOS restaurant IDs 11 (Manage tables &
@@ -212,10 +207,6 @@ const appSettings: Array<{
   },
 ];
 
-function hashPin(pin: string): string {
-  return createHash("sha256").update(pin).digest("hex");
-}
-
 function createPrismaClient(): PrismaClient {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -302,26 +293,39 @@ async function seedRolePermissions(
 }
 
 async function seedAdminUser(prisma: PrismaClient, adminRoleId: number) {
-  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
-  const pinHash = hashPin(ADMIN_PIN);
-
-  await prisma.user.upsert({
-    where: { username: ADMIN_USERNAME },
-    update: {
-      fullName: "System Admin",
-      passwordHash,
-      pin: pinHash,
-      roleId: adminRoleId,
-      isActive: true,
+  return bootstrapAdministrator({
+    adminRoleId,
+    environment: {
+      BOOTSTRAP_ADMIN_USERNAME: process.env.BOOTSTRAP_ADMIN_USERNAME,
+      BOOTSTRAP_ADMIN_PASSWORD: process.env.BOOTSTRAP_ADMIN_PASSWORD,
+      BOOTSTRAP_ADMIN_PIN: process.env.BOOTSTRAP_ADMIN_PIN,
     },
-    create: {
-      username: ADMIN_USERNAME,
-      fullName: "System Admin",
-      passwordHash,
-      pin: pinHash,
-      roleId: adminRoleId,
-      isActive: true,
-    },
+    hashPassword: (password) => bcrypt.hash(password, 12),
+    hashPin,
+    transaction: (operation) =>
+      prisma.$transaction((transaction) =>
+        operation({
+          countAdministrators: (roleId) =>
+            transaction.user.count({ where: { roleId } }),
+          findUserByUsername: (username) =>
+            transaction.user.findUnique({
+              where: { username },
+              select: { id: true, roleId: true },
+            }),
+          createAdministrator: (input) =>
+            transaction.user.create({
+              data: {
+                username: input.username,
+                fullName: input.fullName,
+                passwordHash: input.passwordHash,
+                pin: input.pinHash,
+                roleId: input.roleId,
+                isActive: input.isActive,
+              },
+              select: { id: true },
+            }),
+        }),
+      ),
   });
 }
 
@@ -637,7 +641,10 @@ async function main() {
     const roles = await seedRoles(prisma);
     await seedPermissions(prisma);
     await seedRolePermissions(prisma, roles);
-    await seedAdminUser(prisma, roles.admin);
+    const administratorResult = await seedAdminUser(prisma, roles.admin);
+    if (administratorResult.status === "failed-validation") {
+      throw new Error(administratorResult.message);
+    }
     await seedPaymentMethods(prisma);
     await seedTaxRates(prisma);
     await seedAppSettings(prisma);
@@ -656,7 +663,11 @@ async function main() {
     console.log(`  App settings:    ${appSettings.length}`);
     console.log(`  Terminal:        Lane 1 (id=1)`);
     console.log(`  Sample products: 5 (Bread, Milk, Eggs, Rice, Sugar)`);
-    console.log(`  Admin user:      ${ADMIN_USERNAME} / PIN ${ADMIN_PIN}`);
+    console.log(
+      administratorResult.status === "created"
+        ? "  Administrator:   created"
+        : "  Administrator:   existing account preserved",
+    );
   } finally {
     await prisma.$disconnect();
   }
