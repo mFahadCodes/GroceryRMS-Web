@@ -7,33 +7,57 @@ import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 
 config({ path: ".env.local", override: true });
 
+const username = process.env.SMOKE_ADMIN_USERNAME?.trim();
+const password = process.env.SMOKE_ADMIN_PASSWORD;
+const pin = process.env.SMOKE_ADMIN_PIN;
+
+if (!username) {
+  throw new Error("SMOKE_ADMIN_USERNAME is required for credential verification.");
+}
+
+if (!password) {
+  throw new Error("SMOKE_ADMIN_PASSWORD is required for credential verification.");
+}
+
 const databaseUrl =
   process.env.DATABASE_URL?.startsWith("file:") &&
   !path.isAbsolute(process.env.DATABASE_URL.slice(5))
     ? `file:${path.join(process.cwd(), process.env.DATABASE_URL.slice(5))}`
     : process.env.DATABASE_URL;
 
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is required for credential verification.");
+}
+
 const prisma = new PrismaClient({
   adapter: new PrismaBetterSqlite3({ url: databaseUrl }),
 });
 
-const user = await prisma.user.findFirst({
-  where: { username: "admin", isActive: true },
-});
+try {
+  const user = await prisma.user.findFirst({
+    where: { username, isActive: true },
+  });
 
-if (!user) {
-  console.error("FAIL: admin user not found — run npm run db:seed");
-  process.exit(1);
+  if (!user) {
+    console.error("Credential verification failed: active user not found.");
+    process.exitCode = 1;
+  } else {
+    const passwordOk = await bcrypt.compare(password, user.passwordHash);
+    const pinOk =
+      pin === undefined
+        ? null
+        : user.pin === createHash("sha256").update(pin).digest("hex");
+
+    console.log("SQLite connection: OK");
+    console.log("User lookup: OK");
+    console.log("Password verification:", passwordOk ? "OK" : "FAIL");
+    console.log(
+      "PIN verification:",
+      pinOk === null ? "SKIPPED" : pinOk ? "OK" : "FAIL",
+    );
+
+    process.exitCode = passwordOk && pinOk !== false ? 0 : 1;
+  }
+} finally {
+  await prisma.$disconnect();
 }
-
-const passwordOk = await bcrypt.compare("Admin@123", user.passwordHash);
-const pinOk =
-  user.pin === createHash("sha256").update("1234").digest("hex");
-
-console.log("SQLite connection: OK");
-console.log("admin user: OK");
-console.log("password Admin@123:", passwordOk ? "OK" : "FAIL");
-console.log("PIN 1234:", pinOk ? "OK" : "FAIL");
-
-await prisma.$disconnect();
-process.exit(passwordOk && pinOk ? 0 : 1);
