@@ -3,16 +3,29 @@ import {
   sanitizeStoredAuditJson,
   serializeSafeAuditMetadata,
 } from "@/lib/security/audit-sanitizer";
-
-type AuditInput = {
-  userId?: number | null;
-  action: string;
-  tableName?: string | null;
-  recordId?: number | null;
-  oldValues?: unknown;
-  newValues?: unknown;
-  ipAddress?: string | null;
-};
+import {
+  AuditPolicyError,
+  getAuditEventDefinition,
+  type AccessActivityAuditAction,
+  type BestEffortAuditAction,
+  type TransactionRequiredAuditAction,
+} from "@/lib/security/audit-policy";
+import type {
+  InventoryApplyAuditMetadata,
+  ManagerApprovalAuditMetadata,
+  OrderCheckoutAuditMetadata,
+  OrderDiscountAuditMetadata,
+  OrderPartialPaymentAuditMetadata,
+  OrderRefundAuditMetadata,
+  OrderReturnAuditMetadata,
+  OrderVoidAuditMetadata,
+  PasswordChangedAuditMetadata,
+  PinChangedAuditMetadata,
+  RolePermissionsAuditMetadata,
+  SessionForceLogoutAuditMetadata,
+  SettingUpsertAuditMetadata,
+  UserAccountAuditMetadata,
+} from "@/lib/security/audit-metadata";
 
 type AuditStore = {
   auditLog: {
@@ -38,50 +51,237 @@ function getIpAddress(request: Request): string | null {
   return request.headers.get("x-real-ip");
 }
 
-function buildAuditData(input: AuditInput) {
-  return {
-    userId: input.userId ?? null,
-    action: input.action,
-    tableName: input.tableName ?? null,
-    recordId: input.recordId ?? null,
-    oldValues: serializeSafeAuditMetadata(input.oldValues),
-    newValues: serializeSafeAuditMetadata(input.newValues),
-    ipAddress: input.ipAddress ?? null,
-  };
-}
+type AuditWriteInput = {
+  userId?: number | null;
+  action: string;
+  recordId?: number | null;
+  oldValues?: unknown;
+  newValues?: unknown;
+  ipAddress?: string | null;
+};
 
 /**
- * Transactional / shared audit write boundary.
- *
- * Always sanitizes metadata immediately before Prisma persistence. Callers
- * cannot disable sanitization or mark data as pre-sanitized.
+ * Internal persistence boundary. Not exported: all writes must go through
+ * the mode-specific wrappers below, which enforce the SEC-05B audit policy
+ * registry. Metadata is always sanitized immediately before persistence;
+ * callers cannot disable sanitization or mark data as pre-sanitized.
  */
-export async function writeAuditRecord(
+async function writeAuditRecord(
   store: AuditStore,
-  input: AuditInput,
+  input: AuditWriteInput,
+  entityTable: string | null,
 ): Promise<void> {
   await store.auditLog.create({
-    data: buildAuditData(input),
+    data: {
+      userId: input.userId ?? null,
+      action: input.action,
+      tableName: entityTable,
+      recordId: input.recordId ?? null,
+      oldValues: serializeSafeAuditMetadata(input.oldValues),
+      newValues: serializeSafeAuditMetadata(input.newValues),
+      ipAddress: input.ipAddress ?? null,
+    },
   });
 }
 
-/**
- * Best-effort audit writer used by ordinary route handlers.
- * Failures are swallowed so low-risk business operations are not blocked.
- */
-export async function auditLog(input: AuditInput): Promise<void> {
-  try {
-    await writeAuditRecord(prisma, input);
-  } catch {
-    // Never block business flow if audit logging fails.
+function enforceIdentityRequirements(
+  action: string,
+  input: AuditWriteInput,
+): void {
+  const definition = getAuditEventDefinition(action);
+  if (
+    definition.requiresActor &&
+    (input.userId === null || input.userId === undefined)
+  ) {
+    throw new AuditPolicyError(
+      `Audit event "${action}" requires an authenticated actor`,
+    );
+  }
+  if (
+    definition.requiresEntityId &&
+    (input.recordId === null || input.recordId === undefined)
+  ) {
+    throw new AuditPolicyError(
+      `Audit event "${action}" requires an entity record id`,
+    );
   }
 }
 
+/**
+ * Metadata contracts for transaction-required events. Each event accepts
+ * only its registered builder output — arbitrary objects, `parsed.data`,
+ * requests, and full domain entities do not type-check.
+ */
+type RequiredAuditMetadataMap = {
+  PASSWORD_CHANGED: PasswordChangedAuditMetadata;
+  PIN_CHANGED: PinChangedAuditMetadata;
+  PIN_HASH_UPGRADED: PinChangedAuditMetadata;
+  PIN_LOCKOUT_RESET: PinChangedAuditMetadata;
+  PIN_VERIFICATION_SUCCEEDED: PinChangedAuditMetadata;
+  PIN_VERIFICATION_FAILED: PinChangedAuditMetadata;
+  PIN_VERIFICATION_THROTTLED: PinChangedAuditMetadata;
+  FORCE_LOGOUT: SessionForceLogoutAuditMetadata;
+  CREATE_USER: UserAccountAuditMetadata;
+  UPDATE_USER: UserAccountAuditMetadata;
+  DELETE_USER: UserAccountAuditMetadata;
+  REPLACE_ROLE_PERMISSIONS: RolePermissionsAuditMetadata;
+  MANAGER_APPROVAL_ISSUED: ManagerApprovalAuditMetadata;
+  MANAGER_APPROVAL_CONSUMED: ManagerApprovalAuditMetadata;
+  VOID_ORDER: OrderVoidAuditMetadata;
+  APPLY_ORDER_DISCOUNT: OrderDiscountAuditMetadata;
+  CHECKOUT: OrderCheckoutAuditMetadata;
+  PARTIAL_PAYMENT: OrderPartialPaymentAuditMetadata;
+  REFUND_ORDER: OrderRefundAuditMetadata;
+  RETURN: OrderReturnAuditMetadata;
+  UPSERT_SETTING: SettingUpsertAuditMetadata;
+  RECEIVE_PURCHASE_ORDER: InventoryApplyAuditMetadata;
+  APPLY_STOCK_TAKE: InventoryApplyAuditMetadata;
+};
+
+// Compile-time check: the metadata map covers exactly the registered
+// transaction-required actions.
+type AssertExactRequiredMap = [
+  Exclude<TransactionRequiredAuditAction, keyof RequiredAuditMetadataMap>,
+  Exclude<keyof RequiredAuditMetadataMap, TransactionRequiredAuditAction>,
+] extends [never, never]
+  ? true
+  : never;
+const requiredMapCoversRegistry: AssertExactRequiredMap = true;
+void requiredMapCoversRegistry;
+
+export type RequiredAuditInput<
+  A extends TransactionRequiredAuditAction = TransactionRequiredAuditAction,
+> = {
+  action: A;
+  userId?: number | null;
+  recordId?: number | null;
+  newValues: RequiredAuditMetadataMap[A];
+  ipAddress?: string | null;
+};
+
+/**
+ * Transactionally required audit write.
+ *
+ * Must be called with the Prisma transaction client of the protected
+ * mutation. The root Prisma client is rejected so the audit record cannot be
+ * committed independently of the mutation. Persistence failures propagate
+ * and roll the whole transaction back; they are never caught here.
+ */
+export async function writeRequiredAudit<
+  A extends TransactionRequiredAuditAction,
+>(transaction: AuditStore, input: RequiredAuditInput<A>): Promise<void> {
+  const definition = getAuditEventDefinition(input.action);
+  if (definition.mode !== "TRANSACTION_REQUIRED") {
+    throw new AuditPolicyError(
+      `Audit event "${input.action}" is not transaction-required`,
+    );
+  }
+  // Root PrismaClient exposes $connect; interactive transaction clients from
+  // driver adapters still expose $transaction, so $connect is the reliable
+  // discriminator that rejects unaudited root-client writes.
+  if (typeof (transaction as { $connect?: unknown }).$connect === "function") {
+    throw new AuditPolicyError(
+      `Required audit "${input.action}" must use the mutation's transaction client, not a root Prisma client`,
+    );
+  }
+  enforceIdentityRequirements(input.action, input);
+  await writeAuditRecord(transaction, input, definition.entityTable);
+}
+
+export type BestEffortAuditInput = {
+  action: BestEffortAuditAction;
+  userId?: number | null;
+  recordId?: number | null;
+  oldValues?: unknown;
+  newValues?: unknown;
+  ipAddress?: string | null;
+  /**
+   * Ignored. Entity table is owned by the audit policy registry; callers
+   * cannot override it. Accepted only so existing route literals continue
+   * to type-check while being migrated off caller-supplied tables.
+   */
+  tableName?: string | null;
+};
+
+/**
+ * Best-effort audit write for approved low-risk operations. Persistence
+ * failures are swallowed so the underlying operation is never blocked; raw
+ * metadata is never logged on failure. Policy violations (unknown action,
+ * wrong mode) still fail closed because they are developer errors, not
+ * runtime storage failures.
+ */
+export async function writeBestEffortAudit(
+  input: BestEffortAuditInput,
+): Promise<void> {
+  const definition = getAuditEventDefinition(input.action);
+  if (definition.mode !== "BEST_EFFORT") {
+    throw new AuditPolicyError(
+      `Audit event "${input.action}" is not best-effort; use its registered wrapper`,
+    );
+  }
+  enforceIdentityRequirements(input.action, input);
+  try {
+    await writeAuditRecord(prisma, input, definition.entityTable);
+  } catch {
+    // Never block business flow if audit logging fails. No raw metadata is
+    // emitted here by design.
+  }
+}
+
+/**
+ * Best-effort audit with request-derived IP context. This is the standard
+ * route-handler entry point for registered best-effort events.
+ */
 export async function auditFromRequest(
   request: Request,
-  input: Omit<AuditInput, "ipAddress">,
+  input: Omit<BestEffortAuditInput, "ipAddress">,
 ): Promise<void> {
-  await auditLog({
+  await writeBestEffortAudit({
+    ...input,
+    ipAddress: getIpAddress(request),
+  });
+}
+
+export type AccessAuditInput = {
+  action: AccessActivityAuditAction;
+  userId?: number | null;
+  recordId?: number | null;
+  newValues?: unknown;
+  ipAddress?: string | null;
+  /** Ignored. Entity table is owned by the audit policy registry. */
+  tableName?: string | null;
+};
+
+/**
+ * Access/read activity audit. Non-mutating by policy: it never receives a
+ * transaction client, never blocks the response when audit storage is
+ * unavailable, and must not be used for security or financial mutations.
+ */
+export async function writeAccessAudit(
+  input: AccessAuditInput,
+): Promise<void> {
+  const definition = getAuditEventDefinition(input.action);
+  if (definition.mode !== "ACCESS_ACTIVITY") {
+    throw new AuditPolicyError(
+      `Audit event "${input.action}" is not access activity`,
+    );
+  }
+  enforceIdentityRequirements(input.action, input);
+  try {
+    await writeAuditRecord(prisma, input, definition.entityTable);
+  } catch {
+    // Access auditing must never change response data or authorization.
+  }
+}
+
+/**
+ * Access-activity audit with request-derived IP context.
+ */
+export async function accessAuditFromRequest(
+  request: Request,
+  input: Omit<AccessAuditInput, "ipAddress">,
+): Promise<void> {
+  await writeAccessAudit({
     ...input,
     ipAddress: getIpAddress(request),
   });
