@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`4dd28a0…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`bdd731f…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -28,30 +28,30 @@ branch are collected under "In-flight decisions" and are not yet binding on main
 - **Layered permission model for approvals.** Requester needs the base permission at level 1; the manager needs the mapped elevated permission (`Apply discounts` ≥ 4, `Void / cancel orders` ≥ 5).
 - **Self-approval preserved; dual control deferred.** A qualified requester may approve via PIN+grant; approver ≠ requester is not yet required.
 - **Trusted-terminal binding is optional and deferred.** Grants store the session terminal and enforce it when present, but a trustworthy end-to-end terminal identity does not yet exist.
+- **Generic order update is not a command bus.** `PUT /api/orders/{id}` `updateMeta` accepts only `notes` and `customerId`; privileged actions use dedicated endpoints (`docs/security/order-generic-update-boundary.md`).
 
 ## Money
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `fix/sec-04a-order-action-bypass`, not merged)
+## In-flight decisions (branch `fix/sec-05a-audit-redaction`, not merged)
 
-These are implemented and verified on the SEC-04A branch (base `main` `4dd28a0…`) and
-become binding only once merged. See `docs/security/order-generic-update-boundary.md`.
+These are implemented and verified on the SEC-05A branch (base `main` `bdd731f…`) and
+become binding only once merged. See `docs/security/audit-redaction.md`.
 
-- **Generic order update is not a command bus.** `PUT /api/orders/{id}` may perform
-  level-1 item edits and a strict metadata allowlist only. It must never interpret
-  note text, metadata fields, or action flags as privileged business commands.
-- **Strict metadata allowlist.** `updateMeta` accepts only `notes` (verbatim plain
-  text, max 2000 chars) and `customerId`. Unknown and protected fields are rejected.
-- **Dedicated endpoints own privileged actions.** Discount, void, hold, recall,
-  checkout, tax, adjustment, payment, refund, return, dispatch, and delivered each
-  keep their own route, permission check, and (where applicable) manager approval
-  grant requirement.
-- **No mass assignment.** Request bodies are never spread into Prisma; the metadata
-  service builds update data field-by-field from a closed typed input.
-- **Breaking compatibility for unsafe clients.** Former magic note commands and
-  financial `updateMeta` fields stop working; clients must migrate to dedicated
-  routes. Plain notes and customer assignment remain.
+- **Audit metadata is untrusted.** Every audit write sanitizes `oldValues` /
+  `newValues` through one central pure sanitizer before Prisma persistence.
+- **No sanitizer bypass.** Callers cannot disable redaction or mark data
+  pre-sanitized. Direct `auditLog.create` outside `lib/audit.ts` is forbidden.
+- **Bounded recursive sanitization.** Depth, property count, array length, string
+  length, and UTF-8 serialized size are capped; cycles and unsupported objects
+  become stable markers without throwing.
+- **Read-time defense in depth.** Audit report APIs re-sanitize stored JSON and
+  project only safe user fields, protecting historical unsafe rows without
+  rewriting the database.
+- **Preserve existing audit failure policy.** Transactionally required security
+  audits remain fatal inside their transactions; best-effort route audits remain
+  non-blocking. Broad policy standardization is SEC-05B.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.

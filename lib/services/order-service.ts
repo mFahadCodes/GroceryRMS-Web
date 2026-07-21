@@ -1,9 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { CustomerTier, OrderStatus, OrderType } from "@prisma/client";
+import { writeAuditRecord } from "@/lib/audit";
 import { ServiceError } from "@/lib/api/service-error";
 import { createOrderWithUniqueNumber } from "@/lib/order-number";
 import { calculatePaisaTotals } from "@/lib/paisa-math";
+import {
+  buildOrderDiscountAuditMetadata,
+  buildOrderVoidAuditMetadata,
+} from "@/lib/security/audit-metadata";
 import {
   consumeManagerApprovalGrant,
   type ManagerApprovalRequester,
@@ -263,18 +268,16 @@ export async function voidOrder(input: {
     });
 
     if (input.approvalToken !== undefined && input.requester !== undefined) {
-      await tx.auditLog.create({
-        data: {
-          userId: input.requester.userId,
-          action: "VOID_ORDER",
-          tableName: "orders",
-          recordId: input.orderId,
-          newValues: serializeAuditValues({
-            reason: input.reason,
-            approvedByUserId: approval.approverUserId,
-          }),
-          ipAddress: input.auditIpAddress ?? null,
-        },
+      await writeAuditRecord(tx, {
+        userId: input.requester.userId,
+        action: "VOID_ORDER",
+        tableName: "orders",
+        recordId: input.orderId,
+        newValues: buildOrderVoidAuditMetadata({
+          reason: input.reason,
+          approvedByUserId: approval.approverUserId,
+        }),
+        ipAddress: input.auditIpAddress ?? null,
       });
     }
 
@@ -415,20 +418,18 @@ export async function applyOrderDiscount(input: {
       include: orderInclude,
     });
     if (input.approvalToken !== undefined && input.requester !== undefined) {
-      await tx.auditLog.create({
-        data: {
-          userId: input.requester.userId,
-          action: "APPLY_ORDER_DISCOUNT",
-          tableName: "orders",
-          recordId: input.orderId,
-          newValues: serializeAuditValues({
-            discountAmount: input.discountAmount,
-            discountPercent: input.discountPercent,
-            reason: input.reason,
-            approvedByUserId: approval.approverUserId,
-          }),
-          ipAddress: input.auditIpAddress ?? null,
-        },
+      await writeAuditRecord(tx, {
+        userId: input.requester.userId,
+        action: "APPLY_ORDER_DISCOUNT",
+        tableName: "orders",
+        recordId: input.orderId,
+        newValues: buildOrderDiscountAuditMetadata({
+          discountAmount: input.discountAmount,
+          discountPercent: input.discountPercent,
+          reason: input.reason,
+          approvedByUserId: approval.approverUserId,
+        }),
+        ipAddress: input.auditIpAddress ?? null,
       });
     }
     return updated;
@@ -756,12 +757,6 @@ async function resolveTaxRate(
     taxPercent: Number(taxRate.rate),
     isInclusive: taxRate.isInclusive,
   };
-}
-
-function serializeAuditValues(value: unknown): string {
-  return JSON.stringify(value, (_key, nested) =>
-    typeof nested === "bigint" ? nested.toString() : nested,
-  );
 }
 
 async function hasPermissionInTransaction(

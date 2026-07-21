@@ -5,6 +5,7 @@ import { ServiceError } from "@/lib/api/service-error";
 import { serializeRecord } from "@/lib/api/serialize";
 import { fail, ok } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
+import { buildSessionForceLogoutAuditMetadata } from "@/lib/security/audit-metadata";
 import { forceLogoutSession } from "@/lib/services/session-service";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -24,10 +25,10 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       action: "FORCE_LOGOUT",
       tableName: "user_sessions",
       recordId: sessionId,
-      newValues: {
+      newValues: buildSessionForceLogoutAuditMetadata({
         userId: session.userId,
         username: session.user.username,
-      },
+      }),
     });
     return ok(serializeRecord(session));
   } catch (error) {

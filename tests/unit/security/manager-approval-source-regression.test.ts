@@ -44,10 +44,10 @@ describe("manager approval source regression", () => {
   it("does not audit raw approval tokens or digests on issuance", () => {
     const source = read("lib/services/manager-approval-service.ts");
     const issuedAudit = source.match(
-      /action:\s*"MANAGER_APPROVAL_ISSUED"[\s\S]*?newValues:[\s\S]*?\n\s*\},/,
+      /action:\s*"MANAGER_APPROVAL_ISSUED"[\s\S]*?buildManagerApprovalAuditMetadata\([\s\S]*?\}\),/,
     )?.[0];
     const consumedAudit = source.match(
-      /action:\s*"MANAGER_APPROVAL_CONSUMED"[\s\S]*?newValues:[\s\S]*?\n\s*\},/,
+      /action:\s*"MANAGER_APPROVAL_CONSUMED"[\s\S]*?buildManagerApprovalAuditMetadata\([\s\S]*?\}\),/,
     )?.[0];
     expect(issuedAudit).toBeTruthy();
     expect(consumedAudit).toBeTruthy();
@@ -57,6 +57,11 @@ describe("manager approval source regression", () => {
       expect(block).not.toContain("rawToken");
       expect(block).not.toContain("sessionId");
     }
+    const builder = read("lib/security/audit-metadata.ts");
+    expect(builder).toContain("buildManagerApprovalAuditMetadata");
+    expect(builder).not.toMatch(
+      /buildManagerApprovalAuditMetadata[\s\S]*?(approvalToken|tokenHash|rawToken|sessionId)/,
+    );
   });
 
   it("does not log raw tokens, digests, or session identifiers from approval surfaces", () => {

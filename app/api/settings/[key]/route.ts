@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
 import { serializeRecord } from "@/lib/api/serialize";
+import { buildSettingUpsertAuditMetadata } from "@/lib/security/audit-metadata";
 import {
   getSettingByKey,
   upsertSetting,
@@ -37,7 +38,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     action: "UPSERT_SETTING",
     tableName: "app_settings",
     recordId: updated.id,
-    newValues: parsed.data,
+    newValues: buildSettingUpsertAuditMetadata({
+      settingKey: key,
+      dataType: parsed.data.dataType ?? "string",
+      value: parsed.data.value,
+    }),
   });
   return ok(serializeRecord(updated));
 }

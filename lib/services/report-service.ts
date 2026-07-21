@@ -4,6 +4,7 @@ import {
   localDayRangeFromTo,
   toLocalDateString,
 } from "@/lib/date-range";
+import { mapAuditLogForResponse } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { formatPKR } from "@/lib/currency";
 import { getLowStockProducts } from "@/lib/services/inventory-service";
@@ -502,9 +503,22 @@ export async function getAuditLogReport(page: number, limit: number) {
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
-      include: { user: true },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+          },
+        },
+      },
     }),
     prisma.auditLog.count(),
   ]);
-  return { items, total, page, limit };
+  return {
+    items: items.map((item) => mapAuditLogForResponse(item)),
+    total,
+    page,
+    limit,
+  };
 }
