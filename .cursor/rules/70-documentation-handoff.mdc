@@ -1,0 +1,27 @@
+---
+description: Final-report and handoff requirements for documentation and task completion
+globs: docs/**,*.md
+alwaysApply: false
+---
+
+# Documentation and Handoff
+
+Every final task report must contain:
+
+- Branch name
+- Commit hashes and subjects
+- Files changed
+- Schema/migration changes (or explicit "none")
+- API contract changes (or explicit "none")
+- Tests added and updated
+- Test-file and test totals after the change
+- Lint, typecheck, and build results
+- CI result for the branch
+- Database-safety confirmation (`dev.db` untouched; disposable DBs cleaned)
+- Secret-scan result (no credentials in diff)
+- Deferred work and follow-ups
+- Main hash after merge, when available
+
+When a completed task changes project state (contracts, phases, counts), update
+`docs/ai/CURRENT_STATE.md` in the same branch. Use `docs/ai/TASK_HANDOFF_TEMPLATE.md`
+for new task briefs.

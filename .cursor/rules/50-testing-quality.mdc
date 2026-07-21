@@ -1,0 +1,27 @@
+---
+description: Required quality gates and testing standards
+alwaysApply: true
+---
+
+# Testing and Quality Gates
+
+Before claiming any task complete, run all of:
+
+```bash
+npm run db:generate
+npm run lint
+npm run typecheck
+npm run test
+npm run check
+npm run build
+git diff --check
+```
+
+Requirements:
+
+- Zero skipped tests and no `.only` anywhere.
+- Deterministic tests: control clocks explicitly; no reliance on wall-clock timing.
+- Tests must pass in a clean-CI reproduction (fresh checkout, `npm ci`, explicit `.tmp` creation).
+- Transactional state (sessions, throttling, password/PIN changes) requires concurrency tests.
+- Never weaken assertions, add broad exclusions, or disable lint/type rules merely to obtain green checks.
+- The GitHub Actions "Quality Gates" workflow must pass on the branch before recommending merge.

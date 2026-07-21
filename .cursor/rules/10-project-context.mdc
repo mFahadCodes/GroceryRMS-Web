@@ -1,0 +1,13 @@
+---
+description: What GroceryRMS-Web is and its current phase
+alwaysApply: true
+---
+
+# Project Context
+
+- GroceryRMS-Web is a grocery retail point-of-sale **web application** with a production, business-grade objective.
+- Stack: Next.js App Router, TypeScript, Prisma ORM, SQLite for local development and disposable test databases. PostgreSQL production migration is **deferred**.
+- Current phase is **backend-first**: services, API routes, security, and data integrity. The frontend exists but is intentionally incomplete and out of scope unless explicitly approved.
+- The recovered RPOS desktop application (reference material outside this repository) is a **behavioral reference only**. Preserve valid business behavior; do not replicate legacy defects or legacy security practices.
+- Money is stored as BigInt paisa (1 PKR = 100 paisa); API responses serialize money as string paisa.
+- See `docs/ai/PROJECT_CONTEXT.md` and `docs/ai/CURRENT_STATE.md` for maintained details.

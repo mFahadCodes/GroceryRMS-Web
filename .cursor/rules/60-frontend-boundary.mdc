@@ -1,0 +1,19 @@
+---
+description: Frontend work boundary — backend-first phase
+globs: app/**/page.tsx,app/**/layout.tsx,components/**,hooks/**,stores/**,**/*.css
+alwaysApply: false
+---
+
+# Frontend Boundary
+
+- The current focus is **backend**. Any frontend change requires explicit human approval first.
+- When backend work changes an API contract the frontend depends on, document the change (in the task report and `docs/ai/CURRENT_STATE.md`) instead of patching the frontend.
+- Do not create temporary frontend workarounds to make a backend change appear complete.
+
+Known deferred frontend work (do not start without approval):
+
+- Password-rotation UI (redirect on `mustChangePassword`, change-password screen).
+- Explicit user selection for PIN login (`userId` + `pin` payload).
+- Explicit manager selection for approvals (`managerUserId` + `managerPin` payload).
+- Updated PIN request payloads replacing anonymous quick-login.
+- Future SEC-02B manager approval UX (terminal/session-bound grants).

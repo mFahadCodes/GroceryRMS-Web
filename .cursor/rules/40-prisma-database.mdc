@@ -1,0 +1,17 @@
+---
+description: Prisma and database safety rules
+globs: prisma/**,tests/**/*migration*,tests/**/*database*,tests/**/*prisma*,lib/prisma.ts,lib/database-url.ts
+alwaysApply: false
+---
+
+# Prisma and Database Safety
+
+- **Never access, read, migrate, seed, or modify `dev.db` during automated tasks.** It is the developer's personal local database.
+- Tests use disposable SQLite databases only, created under `.tmp/`. Create `.tmp` directories explicitly so clean CI environments work.
+- Schema changes require a reviewed Prisma migration committed under `prisma/migrations/`. Never use `prisma db push` for production or as a substitute for migrations.
+- Stop and request approval before writing any destructive migration SQL (DROP, data-loss column changes).
+- Migration tests must cover both fresh-install (`migrate deploy` from empty) and upgrade paths, and must preserve unrelated tables and columns.
+- Never run the seed automatically; seeding is an explicit human action against an intended database.
+- Clean up SQLite sidecar files (`*.db-journal`, `*.db-shm`, `*.db-wal`) that tests create.
+- PostgreSQL production migration is deferred; do not start it without approval.
+- See `docs/database/migration-baseline.md` for baseline adoption rules.

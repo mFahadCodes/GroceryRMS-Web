@@ -1,0 +1,14 @@
+---
+description: Git workflow and history-safety rules
+alwaysApply: true
+---
+
+# Git Workflow
+
+- Run Git commands only inside the `GroceryRMS-Web` repository. Never initialize Git elsewhere in the workspace.
+- Start every task from a clean, synchronized `main` and verify the exact approved full commit hash provided for the task. Stop on any branch or history mismatch.
+- Do all work on a dedicated task branch. Never commit directly to `main`.
+- Never create a pull request or merge automatically; a human does both.
+- Never force push, rebase, rewrite history, or amend a pushed commit. Never run `git clean` or `git reset --hard`.
+- Make small, logical commits with conventional messages (e.g. `fix(auth): …`, `test(security): …`).
+- Preserve the original baseline tag `groceryrms-web-baseline-2026-07-16`; never move or delete tags.
