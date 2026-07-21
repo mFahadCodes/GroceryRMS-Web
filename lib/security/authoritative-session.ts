@@ -9,6 +9,7 @@ export interface AuthoritativeSessionClaims {
 export interface AuthoritativeSessionRecord {
   sessionId: string | null;
   userId: number;
+  terminalId: number | null;
   authVersion: number | null;
   isActive: boolean;
   expiresAt: Date | null;
@@ -47,6 +48,7 @@ export function createPrismaAuthoritativeSessionRepository(
         select: {
           sessionId: true,
           userId: true,
+          terminalId: true,
           authVersion: true,
           isActive: true,
           expiresAt: true,
@@ -81,6 +83,9 @@ export function createPrismaAuthoritativeSessionRepository(
 
 export interface AuthoritativePrincipal {
   userId: number;
+  sessionId: string;
+  authVersion: number;
+  terminalId: number | null;
   roleId: number;
   permissions: string[];
   mustChangePassword: boolean;
@@ -154,17 +159,20 @@ export async function validateAuthoritativeSession(
     return { ok: false, reason: "ROLE_INACTIVE" };
   }
 
-  return {
-    ok: true,
-    principal: {
-      userId,
-      roleId: record.user.roleId,
-      mustChangePassword: record.user.mustChangePassword,
-      permissions: record.user.role.rolePermissions
-        .filter((row) => row.permission.isActive)
-        .map((row) => `${row.permission.name}:${row.accessLevel}`),
-    },
-  };
+  const principal = {
+    userId,
+    roleId: record.user.roleId,
+    mustChangePassword: record.user.mustChangePassword,
+    permissions: record.user.role.rolePermissions
+      .filter((row) => row.permission.isActive)
+      .map((row) => `${row.permission.name}:${row.accessLevel}`),
+  } as AuthoritativePrincipal;
+  Object.defineProperties(principal, {
+    sessionId: { value: sessionId, enumerable: false },
+    authVersion: { value: record.user.authVersion, enumerable: false },
+    terminalId: { value: record.terminalId, enumerable: false },
+  });
+  return { ok: true, principal };
 }
 
 function parsePositiveInteger(value: unknown): number | null {

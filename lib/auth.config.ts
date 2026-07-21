@@ -90,6 +90,23 @@ export const authConfig = {
         ? token.permissions
         : [];
       user.mustChangePassword = token.mustChangePassword === true;
+      if (
+        typeof token.sessionId === "string" &&
+        Number.isSafeInteger(token.authVersion) &&
+        Number(token.authVersion) > 0
+      ) {
+        Object.defineProperty(session, "authoritative", {
+          value: {
+            sessionId: token.sessionId,
+            authVersion: Number(token.authVersion),
+            terminalId:
+              typeof token.terminalId === "number" ? token.terminalId : null,
+          },
+          enumerable: false,
+          configurable: false,
+          writable: false,
+        });
+      }
       return session;
     },
   },

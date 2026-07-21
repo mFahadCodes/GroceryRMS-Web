@@ -157,6 +157,8 @@ model User {
   employees       Employee[]
   ordersAsCashier Order[]         @relation("OrderCashier")
   ordersApproved  Order[]         @relation("OrderApprovedBy")
+  requestedManagerApprovalGrants ManagerApprovalGrant[] @relation("ManagerApprovalRequester")
+  approvedManagerApprovalGrants  ManagerApprovalGrant[] @relation("ManagerApprovalApprover")
   stockMovements  StockMovement[]
   cashDrawerLogs  CashDrawerLog[]
   shifts          Shift[]
@@ -238,8 +240,41 @@ model UserSession {
 
   user     User      @relation(fields: [userId], references: [id], onDelete: NoAction)
   terminal Terminal? @relation(fields: [terminalId], references: [id], onDelete: NoAction)
+  managerApprovalGrants ManagerApprovalGrant[]
 
   @@map("user_sessions")
+}
+
+model ManagerApprovalGrant {
+  id                   Int       @id @default(autoincrement())
+  tokenHash            String    @unique @map("token_hash")
+  requesterUserId      Int       @map("requester_user_id")
+  requesterSessionId   Int       @map("requester_session_id")
+  requesterAuthVersion Int       @map("requester_auth_version")
+  approverUserId       Int       @map("approver_user_id")
+  approverAuthVersion  Int       @map("approver_auth_version")
+  action               String
+  resourceType         String    @map("resource_type")
+  resourceId           Int       @map("resource_id")
+  requiredPermission   String    @map("required_permission")
+  requiredAccessLevel  Int       @map("required_access_level")
+  terminalId           Int?      @map("terminal_id")
+  expiresAt            DateTime  @map("expires_at")
+  consumedAt           DateTime? @map("consumed_at")
+  revokedAt            DateTime? @map("revoked_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  requesterUser    User        @relation("ManagerApprovalRequester", fields: [requesterUserId], references: [id], onDelete: Cascade)
+  requesterSession UserSession @relation(fields: [requesterSessionId], references: [id], onDelete: Cascade)
+  approverUser     User        @relation("ManagerApprovalApprover", fields: [approverUserId], references: [id], onDelete: Cascade)
+  resourceOrder    Order       @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  terminal         Terminal?   @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+
+  @@index([requesterSessionId])
+  @@index([approverUserId])
+  @@index([expiresAt])
+  @@index([resourceType, resourceId, action])
+  @@map("manager_approval_grants")
 }
 
 model AuditLog {
@@ -542,6 +577,7 @@ model Order {
   payments            Payment[]
   loyaltyTransactions LoyaltyTransaction[]
   cashDrawerLogs      CashDrawerLog[]
+  managerApprovalGrants ManagerApprovalGrant[]
 
   @@index([status, createdAt])
   @@index([customerId])
@@ -849,6 +885,7 @@ model Terminal {
   orders         Order[]
   shifts         Shift[]
   dailySummaries DailySummary[]
+  managerApprovalGrants ManagerApprovalGrant[]
 
   @@map("terminals")
 }
