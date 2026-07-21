@@ -12,6 +12,7 @@ function validRecord(): AuthoritativeSessionRecord {
   return {
     sessionId: SESSION_ID,
     userId: 7,
+    terminalId: null,
     authVersion: 3,
     isActive: true,
     expiresAt: new Date("2026-07-21T08:00:00.000Z"),
