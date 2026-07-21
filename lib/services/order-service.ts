@@ -1334,6 +1334,43 @@ export async function applyOrderAdjustment(orderId: number, adjustment: bigint) 
   });
 }
 
+/**
+ * SEC-04A safe metadata input for the generic order update path.
+ *
+ * This type is intentionally closed: it accepts only plain metadata and no
+ * financial, state, payment, item, ownership, or approval fields. Do not widen
+ * it to a general record or add protected order fields — privileged actions
+ * must use their dedicated services and routes.
+ */
+export type SafeOrderMetadataInput = {
+  notes?: string | null;
+  customerId?: number | null;
+};
+
+/**
+ * Narrow metadata-only update used by the generic `PUT /api/orders/{id}`
+ * `updateMeta` action. Builds the Prisma update data explicitly from the
+ * typed allowlist; it never interprets values as commands and never touches
+ * calculated or protected fields.
+ */
+export async function updateOrderMetadata(
+  orderId: number,
+  input: SafeOrderMetadataInput,
+) {
+  const data: { notes?: string | null; customerId?: number | null } = {};
+  if (input.notes !== undefined) data.notes = input.notes;
+  if (input.customerId !== undefined) data.customerId = input.customerId;
+  if (input.notes === undefined && input.customerId === undefined) {
+    throw new ServiceError("No metadata fields provided");
+  }
+
+  return prisma.order.update({
+    where: { id: orderId },
+    data,
+    include: orderInclude,
+  });
+}
+
 export async function updateOrderNotes(orderId: number, notes: string | null) {
   const order = await prisma.order.findUnique({ where: { id: orderId } });
   if (!order) throw new ServiceError("Order not found", "ORDER_NOT_FOUND");
