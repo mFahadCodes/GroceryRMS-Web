@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`bdd731f…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`f628869…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -29,29 +29,36 @@ branch are collected under "In-flight decisions" and are not yet binding on main
 - **Self-approval preserved; dual control deferred.** A qualified requester may approve via PIN+grant; approver ≠ requester is not yet required.
 - **Trusted-terminal binding is optional and deferred.** Grants store the session terminal and enforce it when present, but a trustworthy end-to-end terminal identity does not yet exist.
 - **Generic order update is not a command bus.** `PUT /api/orders/{id}` `updateMeta` accepts only `notes` and `customerId`; privileged actions use dedicated endpoints (`docs/security/order-generic-update-boundary.md`).
+- **Audit metadata is untrusted.** Every audit write sanitizes `oldValues` /
+  `newValues` through one central pure sanitizer before Prisma persistence
+  (`docs/security/audit-redaction.md`).
+- **No sanitizer bypass.** Callers cannot disable redaction or mark data
+  pre-sanitized. Direct `auditLog.create` outside `lib/audit.ts` is forbidden.
+- **Read-time defense in depth.** Audit report APIs re-sanitize stored JSON and
+  project only safe user fields, protecting historical unsafe rows without
+  rewriting the database.
 
 ## Money
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `fix/sec-05a-audit-redaction`, not merged)
+## In-flight decisions (branch `fix/sec-05b-audit-integrity-policy`, not merged)
 
-These are implemented and verified on the SEC-05A branch (base `main` `bdd731f…`) and
-become binding only once merged. See `docs/security/audit-redaction.md`.
+These are implemented and verified on the SEC-05B branch (base `main` `f628869…`)
+and become binding only once merged. See `docs/security/audit-integrity-policy.md`.
 
-- **Audit metadata is untrusted.** Every audit write sanitizes `oldValues` /
-  `newValues` through one central pure sanitizer before Prisma persistence.
-- **No sanitizer bypass.** Callers cannot disable redaction or mark data
-  pre-sanitized. Direct `auditLog.create` outside `lib/audit.ts` is forbidden.
-- **Bounded recursive sanitization.** Depth, property count, array length, string
-  length, and UTF-8 serialized size are capped; cycles and unsupported objects
-  become stable markers without throwing.
-- **Read-time defense in depth.** Audit report APIs re-sanitize stored JSON and
-  project only safe user fields, protecting historical unsafe rows without
-  rewriting the database.
-- **Preserve existing audit failure policy.** Transactionally required security
-  audits remain fatal inside their transactions; best-effort route audits remain
-  non-blocking. Broad policy standardization is SEC-05B.
+- **Central audit event registry.** Every approved action has one mode
+  (`TRANSACTION_REQUIRED`, `BEST_EFFORT`, or `ACCESS_ACTIVITY`); unknown
+  actions fail closed. Callers cannot choose or override mode or entity table.
+- **Required audits share the mutation transaction.** `writeRequiredAudit`
+  rejects the root Prisma client and throws on persistence failure so mutation
+  and audit commit or roll back together.
+- **Best-effort and access audits remain non-blocking** for approved low-risk
+  and read/print paths; raw metadata is never logged on failure.
+- **High-risk free-text reasons are summarized**, not stored verbatim, in audit
+  metadata (`reasonProvided` / `reasonLength`); business records keep the text.
+- **Shift close remains best effort** until a shift-service transaction redesign
+  lands; physical scrubbing and signing/immutability remain deferred.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.

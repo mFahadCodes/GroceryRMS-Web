@@ -13,7 +13,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { auditLog, writeAuditRecord } from "../../../lib/audit";
+import {
+  writeBestEffortAudit,
+  writeRequiredAudit,
+} from "../../../lib/audit";
 import { changeOwnPassword } from "../../../lib/services/password-service";
 import {
   createManagerApprovalTestDatabase,
@@ -22,7 +25,7 @@ import {
 } from "./manager-approval-test-database";
 
 describe("audit failure policy", () => {
-  const database = createManagerApprovalTestDatabase("sec05a-failure");
+  const database = createManagerApprovalTestDatabase("sec05b-failure");
 
   beforeEach(async () => {
     prismaRef.client = database.client;
@@ -34,7 +37,7 @@ describe("audit failure policy", () => {
     await database.client.user.update({
       where: { id: 2 },
       data: {
-        passwordHash: await hash("OldPass1!"),
+        passwordHash: await hash("current secure test phrase"),
         mustChangePassword: true,
       },
     });
@@ -54,8 +57,8 @@ describe("audit failure policy", () => {
       await expect(
         changeOwnPassword(database.client, {
           userId: 2,
-          currentPassword: "OldPass1!",
-          newPassword: "NewPass1!",
+          currentPassword: "current secure test phrase",
+          newPassword: "replacement secure test phrase",
         }),
       ).rejects.toThrow();
       const user = await database.client.user.findUniqueOrThrow({
@@ -74,16 +77,16 @@ describe("audit failure policy", () => {
     }
   });
 
-  it("best-effort auditLog failure does not throw to callers", async () => {
+  it("best-effort audit failure does not throw to callers", async () => {
     await database.client.$executeRawUnsafe(
       "CREATE TRIGGER fail_audit_insert BEFORE INSERT ON audit_logs BEGIN SELECT RAISE(ABORT, 'test audit failure'); END",
     );
     try {
       await expect(
-        auditLog({
+        writeBestEffortAudit({
           userId: 2,
-          action: "BEST_EFFORT",
-          newValues: { note: "still ok" },
+          action: "UPDATE_ORDER_META",
+          newValues: { notesProvided: true, customerId: null },
         }),
       ).resolves.toBeUndefined();
     } finally {
@@ -94,16 +97,32 @@ describe("audit failure policy", () => {
   });
 
   it("sanitizer exceptions fall back safely without persisting raw input", async () => {
-    await writeAuditRecord(database.client, {
+    await database.client.$transaction(async (tx) => {
+      await writeRequiredAudit(tx, {
+        userId: 2,
+        action: "UPDATE_USER",
+        recordId: 2,
+        newValues: {
+          fieldsChanged: ["username"],
+          passwordChanged: false,
+          pinChanged: false,
+          username: "cashier",
+        },
+      });
+    });
+    // Defense in depth: even if a builder somehow included a secret key,
+    // writeBestEffortAudit still redacts through the sanitizer path.
+    await writeBestEffortAudit({
       userId: 2,
-      action: "SANITIZER_SAFE",
+      action: "CREATE_ORDER",
+      recordId: 50,
       newValues: {
         password: "must-not-persist",
         note: "visible",
       },
     });
     const row = await database.client.auditLog.findFirstOrThrow({
-      where: { action: "SANITIZER_SAFE" },
+      where: { action: "CREATE_ORDER" },
     });
     expect(row.newValues).not.toContain("must-not-persist");
     expect(row.newValues).toContain("visible");

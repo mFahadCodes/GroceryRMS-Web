@@ -25,7 +25,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { auditLog, writeAuditRecord } from "../../../lib/audit";
+import {
+  writeBestEffortAudit,
+  writeRequiredAudit,
+} from "../../../lib/audit";
 import {
   createManagerApprovalTestDatabase,
   resetManagerApprovalTables,
@@ -33,7 +36,7 @@ import {
 } from "./manager-approval-test-database";
 
 describe("audit write boundary", () => {
-  const database = createManagerApprovalTestDatabase("sec05a-write");
+  const database = createManagerApprovalTestDatabase("sec05b-write");
 
   beforeEach(async () => {
     prismaRef.client = database.client;
@@ -48,11 +51,23 @@ describe("audit write boundary", () => {
   });
 
   it("persists safe metadata and redacts sensitive keys before Prisma", async () => {
-    await writeAuditRecord(database.client, {
+    await database.client.$transaction(async (tx) => {
+      await writeRequiredAudit(tx, {
+        userId: 2,
+        action: "UPDATE_USER",
+        recordId: 2,
+        newValues: {
+          username: "cashier",
+          fieldsChanged: ["username"],
+          passwordChanged: false,
+          pinChanged: false,
+        },
+      });
+    });
+    await writeBestEffortAudit({
       userId: 2,
-      action: "UPDATE_USER",
-      tableName: "users",
-      recordId: 2,
+      action: "CREATE_ORDER",
+      recordId: 50,
       newValues: {
         username: "cashier",
         password: "SuperSecret1!",
@@ -60,64 +75,72 @@ describe("audit write boundary", () => {
         managerApprovalToken: "A".repeat(43),
       },
     });
-    const row = await database.client.auditLog.findFirstOrThrow();
+    const row = await database.client.auditLog.findFirstOrThrow({
+      where: { action: "CREATE_ORDER" },
+    });
     expect(row.newValues).toContain(AUDIT_REDACTED);
-    expect(row.newValues).toContain("cashier");
     expect(row.newValues).not.toContain("SuperSecret1!");
     expect(row.newValues).not.toContain("4826");
     expect(row.newValues).not.toContain("A".repeat(43));
   });
 
   it("has no bypass flag and treats all caller metadata as untrusted", async () => {
-    await auditLog({
+    await writeBestEffortAudit({
       userId: 2,
-      action: "TEST_AUDIT",
+      action: "UPDATE_ORDER_META",
+      recordId: 50,
       newValues: {
         alreadySanitized: true,
         skipSanitize: true,
         authorization: "Bearer x.y.z",
-        note: "ok",
+        notesProvided: true,
+        customerId: null,
       },
     });
     const row = await database.client.auditLog.findFirstOrThrow({
-      where: { action: "TEST_AUDIT" },
+      where: { action: "UPDATE_ORDER_META" },
     });
     expect(row.newValues).toContain(AUDIT_REDACTED);
     expect(row.newValues).toContain('"alreadySanitized":true');
     expect(row.newValues).not.toContain("Bearer");
   });
 
-  it("keeps top-level audit fields intact", async () => {
-    await writeAuditRecord(database.client, {
-      userId: 2,
-      action: "SAFE_EVENT",
-      tableName: "orders",
-      recordId: 50,
-      oldValues: { status: "Open" },
-      newValues: { status: "Closed" },
-      ipAddress: "203.0.113.10",
+  it("keeps top-level audit fields intact and uses registry entity table", async () => {
+    await database.client.$transaction(async (tx) => {
+      await writeRequiredAudit(tx, {
+        userId: 2,
+        action: "CHECKOUT",
+        recordId: 50,
+        newValues: {
+          terminalId: 1,
+          paymentCount: 1,
+          paymentMethodIds: [1],
+          grandTotal: "1000",
+        },
+        ipAddress: "203.0.113.10",
+      });
     });
     const row = await database.client.auditLog.findFirstOrThrow({
-      where: { action: "SAFE_EVENT" },
+      where: { action: "CHECKOUT" },
     });
     expect(row.userId).toBe(2);
     expect(row.tableName).toBe("orders");
     expect(row.recordId).toBe(50);
     expect(row.ipAddress).toBe("203.0.113.10");
-    expect(row.oldValues).toContain("Open");
-    expect(row.newValues).toContain("Closed");
+    expect(row.newValues).toContain("1000");
   });
 
-  it("supports transaction-client audit creation", async () => {
+  it("supports transaction-client required audit creation", async () => {
     await database.client.$transaction(async (tx) => {
-      await writeAuditRecord(tx, {
+      await writeRequiredAudit(tx, {
         userId: 2,
-        action: "TX_AUDIT",
-        newValues: { ok: true },
+        action: "PASSWORD_CHANGED",
+        recordId: 2,
+        newValues: buildPasswordChangedAuditMetadata(),
       });
     });
     await expect(
-      database.client.auditLog.count({ where: { action: "TX_AUDIT" } }),
+      database.client.auditLog.count({ where: { action: "PASSWORD_CHANGED" } }),
     ).resolves.toBe(1);
   });
 
@@ -152,8 +175,14 @@ describe("audit write boundary", () => {
       buildOrderVoidAuditMetadata({
         reason: "damaged",
         approvedByUserId: 7,
+        stockReversed: false,
       }),
-    ).toEqual({ reason: "damaged", approvedByUserId: 7 });
+    ).toEqual({
+      reasonProvided: true,
+      reasonLength: 7,
+      approvedByUserId: 7,
+      stockReversed: false,
+    });
     expect(
       buildOrderDiscountAuditMetadata({
         discountAmount: 500n,
@@ -164,22 +193,29 @@ describe("audit write boundary", () => {
     ).toEqual({
       discountAmount: "500",
       discountPercent: 5,
-      reason: null,
+      reasonProvided: false,
+      reasonLength: 0,
       approvedByUserId: 7,
     });
 
     for (const payload of [
       buildPasswordChangedAuditMetadata(),
-      buildPinChangedAuditMetadata("x"),
+      buildPinChangedAuditMetadata("verified"),
       buildManagerApprovalAuditMetadata({
         approverUserId: 1,
         action: "order.void",
         resourceType: "order",
         status: "consumed",
       }),
+      buildOrderVoidAuditMetadata({
+        reason: "customer changed mind",
+        approvedByUserId: 1,
+        stockReversed: true,
+      }),
     ]) {
       const json = serializeSafeAuditMetadata(payload)!;
       expect(json).not.toMatch(/password|pin|token|sessionId/i);
+      expect(json).not.toContain("customer changed mind");
     }
   });
 });

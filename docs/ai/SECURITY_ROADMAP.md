@@ -1,6 +1,6 @@
 # Security and Integrity Roadmap
 
-Last updated: 2026-07-21
+Last updated: 2026-07-22
 
 ## Completed (verified on main)
 
@@ -11,22 +11,25 @@ Last updated: 2026-07-21
 - **SEC-02A** — PIN hardening: versioned peppered hashing (`pin-v2$`), explicit-user verification, persistent per-user and IP-bucket throttling with escalating lockouts, manager approval by explicit identity, lockout-reset endpoint.
 - **SEC-02B** — Terminal/session-bound manager approval grants: one-time opaque tokens, digest-only storage, 120s TTL, transactional discount/void consumption. See `docs/security/manager-approval-grants.md`.
 - **SEC-04A** — Generic order update narrowed to safe metadata; magic note command bus and financial self-approval bypasses removed. See `docs/security/order-generic-update-boundary.md`.
+- **SEC-05A** — Centralized audit metadata redaction and safe audit read behavior. See `docs/security/audit-redaction.md`.
 - Cursor plugin operating model and security-review templates.
 
 ## In flight (implemented and verified on a branch, not merged)
 
-- **SEC-05A** — Centralized audit metadata redaction and safe audit read behavior.
-  Branch `fix/sec-05a-audit-redaction` (base `main`
-  `bdd731f129fbd412a77ca83eeee37d0d2fab64b0`). Enforces recursive write-time
-  sanitization, bounded metadata size/depth, security-event builders, and
-  read-time redaction for historical rows. See
-  `docs/security/audit-redaction.md`. Do not mark broader SEC-05 complete until
-  SEC-05B lands.
+- **SEC-05B** — Audit integrity policy, explicit event metadata contracts, and
+  transaction-policy standardization. Branch
+  `fix/sec-05b-audit-integrity-policy` (base `main`
+  `f62886916318f1fcf137b2954c88d588fa5f226b`). Central registry, controlled
+  wrappers, free-text reason summarization for high-risk events, and
+  same-transaction required audits for critical mutations. See
+  `docs/security/audit-integrity-policy.md`. Do not mark physical historical
+  scrubbing or cryptographic/tamper-evident auditing complete.
 
 ## Next priorities (in order)
 
-1. **SEC-05B** — Audit transaction-policy standardization and planned historical
-   physical scrubbing (offline, separately approved).
+1. Remaining SEC-05B follow-ups after merge — shift-close transaction redesign,
+   remaining broad best-effort metadata builders, planned historical physical
+   scrubbing (offline, separately approved).
 2. **SEC-04 (remainder)** — Broader authorization review of remaining order
    surfaces beyond the generic update path (for example legacy
    `approvedByUserId` service overloads once callers are gone).
@@ -48,5 +51,6 @@ Last updated: 2026-07-21
 - Terminal-identity binding for terminal-level throttling.
 - Consolidation of dedicated notes vs generic `updateMeta` notes into a single public API surface.
 - Physical scrubbing of pre-SEC-05A audit rows; audit encryption/signing/WORM/SIEM.
+- Shift close as transaction-required (requires shift-service redesign).
 
 Do not mark any item complete without a merged implementation and passing gates.

@@ -43,6 +43,11 @@ describe("manager approval source regression", () => {
 
   it("does not audit raw approval tokens or digests on issuance", () => {
     const source = read("lib/services/manager-approval-service.ts");
+    expect(source).toContain("writeRequiredAudit");
+    expect(source).not.toContain("writeAuditRecord");
+    expect(source).not.toMatch(
+      /import\s*\{[^}]*\bwriteAuditRecord\b[^}]*\}\s*from/,
+    );
     const issuedAudit = source.match(
       /action:\s*"MANAGER_APPROVAL_ISSUED"[\s\S]*?buildManagerApprovalAuditMetadata\([\s\S]*?\}\),/,
     )?.[0];

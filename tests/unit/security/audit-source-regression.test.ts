@@ -32,16 +32,22 @@ describe("audit source regression", () => {
       const source = read(file);
       expect(source, file).not.toMatch(/\.auditLog\.create\s*\(/);
     }
-    expect(read("lib/audit.ts")).toContain("writeAuditRecord");
+    expect(read("lib/audit.ts")).toContain("writeRequiredAudit");
+    expect(read("lib/audit.ts")).toContain("writeBestEffortAudit");
+    expect(read("lib/audit.ts")).toContain("writeAccessAudit");
     expect(read("lib/audit.ts")).toContain("serializeSafeAuditMetadata");
     expect(read("lib/audit.ts")).toContain("mapAuditLogForResponse");
   });
 
-  it("does not allow sanitizer bypass flags in the audit module", () => {
+  it("does not allow sanitizer bypass or caller-controlled audit mode flags", () => {
     const source = read("lib/audit.ts");
     expect(source).not.toContain("skipSanitize");
     expect(source).not.toContain("alreadySanitized");
     expect(source).not.toContain("rawNewValues");
+    expect(source).not.toContain("ignoreAuditFailure");
+    expect(source).not.toContain("skipAudit");
+    expect(source).not.toMatch(/mode\s*[?:]/);
+    expect(source).not.toMatch(/bestEffort\s*[?:]/);
   });
 
   it("security metadata builders never accept password, PIN, token, or session identifiers", () => {
@@ -53,6 +59,7 @@ describe("audit source regression", () => {
     expect(source).toContain("buildPasswordChangedAuditMetadata");
     expect(source).toContain("buildPinChangedAuditMetadata");
     expect(source).toContain("buildManagerApprovalAuditMetadata");
+    expect(source).toContain("summarizeFreeTextReason");
   });
 
   it("report path sanitizes metadata and never selects credential user fields", () => {
@@ -87,17 +94,20 @@ describe("audit source regression", () => {
     expect(errorFn!).not.toContain(".stack");
   });
 
-  it("high-risk services write audits through writeAuditRecord", () => {
+  it("high-risk services write audits through writeRequiredAudit", () => {
     for (const file of [
       "lib/services/password-service.ts",
       "lib/services/manager-approval-service.ts",
       "lib/services/pin-security-service.ts",
       "lib/services/settings-service.ts",
       "lib/services/order-service.ts",
+      "lib/services/session-service.ts",
+      "lib/services/inventory-service.ts",
     ]) {
       const source = read(file);
-      expect(source).toContain("writeAuditRecord");
+      expect(source).toContain("writeRequiredAudit");
       expect(source).not.toMatch(/\.auditLog\.create\s*\(/);
+      expect(source).not.toContain("writeBestEffortAudit");
     }
   });
 });
