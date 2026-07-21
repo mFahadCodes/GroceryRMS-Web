@@ -1,25 +1,26 @@
 import { NextRequest } from "next/server";
-import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
 import { serializeRecord } from "@/lib/api/serialize";
 import { auditFromRequest } from "@/lib/audit";
-import { prisma } from "@/lib/prisma";
 import {
   addItemToOrder,
-  applyOrderDiscount,
   calculateTotals,
   getOrderById,
-  holdOrder,
-  recallOrder,
   removeOrderItem,
   updateItemQuantity,
-  voidOrder,
+  updateOrderMetadata,
 } from "@/lib/services/order-service";
 import { modifyOrderSchema } from "@/lib/validators/order.validators";
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/**
+ * SEC-04A: bound the generic modify body so oversized payloads are rejected
+ * before validation. Item and metadata updates are small; 16 KiB is generous.
+ */
+const MAX_MODIFY_ORDER_REQUEST_BYTES = 16 * 1024;
 
 export async function GET(_request: NextRequest, context: RouteContext) {
   const auth = await requirePermission(PERMS.CREATE_ORDERS, 1);
@@ -35,6 +36,17 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   return ok(serializeRecord(order));
 }
 
+/**
+ * Generic order modification. SEC-04A restricts this route to level-1-safe
+ * operations only: item edits (permission parity with the dedicated item
+ * routes) and a strict metadata allowlist (`notes`, `customerId`).
+ *
+ * This route must never dispatch privileged business actions. Discounts,
+ * voids, holds, recalls, status transitions, payments, tax, and adjustments
+ * have dedicated endpoints with their own permission and manager-approval
+ * requirements; note text is stored verbatim and is never interpreted as a
+ * command. See docs/security/order-generic-update-boundary.md.
+ */
 export async function PUT(request: NextRequest, context: RouteContext) {
   const auth = await requirePermission(PERMS.CREATE_ORDERS, 1);
   if (auth.error) return auth.error;
@@ -49,7 +61,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     return fail("Only open orders can be modified", "ORDER_NOT_OPEN", 400);
   }
 
-  const body = await parseJsonBody<unknown>(request);
+  const body = await readBoundedJson(request);
   const parsed = modifyOrderSchema.safeParse(body);
   if (!parsed.success) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
@@ -108,59 +120,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         break;
       }
       case "updateMeta": {
-        const normalizedNotes = parsed.data.notes?.trim().toLowerCase();
-        if (normalizedNotes === "hold") {
-          await holdOrder(orderId);
-          break;
-        }
-        if (normalizedNotes === "recall") {
-          await recallOrder(orderId);
-          break;
-        }
-        if (normalizedNotes?.startsWith("void:")) {
-          await voidOrder({
-            orderId,
-            reason: parsed.data.notes?.slice(5).trim() || "Voided from updateMeta",
-            approvedByUserId: auth.session.user.id,
-          });
-          break;
-        }
-
-        await prisma.order.update({
-          where: { id: orderId },
-          data: {
-            ...(parsed.data.notes !== undefined
-              ? { notes: parsed.data.notes }
-              : {}),
-            ...(parsed.data.customerId !== undefined
-              ? { customerId: parsed.data.customerId }
-              : {}),
-            ...(parsed.data.discountAmount !== undefined
-              ? { discountAmount: parsed.data.discountAmount }
-              : {}),
-            ...(parsed.data.adjustment !== undefined
-              ? { adjustment: parsed.data.adjustment }
-              : {}),
-          },
+        await updateOrderMetadata(orderId, {
+          notes: parsed.data.notes,
+          customerId: parsed.data.customerId,
         });
-        if (
-          parsed.data.discountPercent !== undefined ||
-          parsed.data.taxPercent !== undefined
-        ) {
-          if (parsed.data.discountPercent !== undefined) {
-            await applyOrderDiscount({
-              orderId,
-              discountPercent: parsed.data.discountPercent,
-              approvedByUserId: auth.session.user.id,
-            });
-          } else {
-            await calculateTotals(
-              orderId,
-              parsed.data.discountPercent ?? 0,
-              parsed.data.taxPercent ?? 0,
-            );
-          }
-        }
         await auditFromRequest(request, {
           userId: auth.session.user.id,
           action: "UPDATE_ORDER_META",
@@ -180,5 +143,26 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       "MODIFY_ORDER_FAILED",
       400,
     );
+  }
+}
+
+async function readBoundedJson(request: Request): Promise<unknown> {
+  const contentLength = Number(request.headers.get("content-length"));
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > MAX_MODIFY_ORDER_REQUEST_BYTES
+  ) {
+    return null;
+  }
+  try {
+    const text = await request.text();
+    if (
+      new TextEncoder().encode(text).byteLength > MAX_MODIFY_ORDER_REQUEST_BYTES
+    ) {
+      return null;
+    }
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
   }
 }

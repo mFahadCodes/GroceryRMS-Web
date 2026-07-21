@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { dateOnlySchema, optionalPaisaSchema, paisaSchema } from "./common";
+import { dateOnlySchema, paisaSchema } from "./common";
 
 export const orderTypeSchema = z.enum(["WalkIn", "Pickup", "Delivery"]);
 
@@ -93,37 +93,61 @@ export const returnOrderItemsSchema = z.object({
   refundAmount: paisaSchema,
 });
 
-export const addItemSchema = z.object({
-  action: z.literal("addItem"),
-  productId: z.number().int().positive(),
-  variantId: z.number().int().positive().optional().nullable(),
-  quantity: z.number().int().min(1).default(1),
-  weightKg: z.union([z.string(), z.number()]).optional().nullable(),
-  notes: z.string().optional().nullable(),
-  scannedBarcode: z.string().optional().nullable(),
-});
+export const addItemSchema = z
+  .object({
+    action: z.literal("addItem"),
+    productId: z.number().int().positive(),
+    variantId: z.number().int().positive().optional().nullable(),
+    quantity: z.number().int().min(1).default(1),
+    weightKg: z.union([z.string(), z.number()]).optional().nullable(),
+    notes: z.string().optional().nullable(),
+    scannedBarcode: z.string().optional().nullable(),
+  })
+  .strict();
 
-export const updateItemSchema = z.object({
-  action: z.literal("updateItem"),
-  orderItemId: z.number().int().positive(),
-  quantity: z.number().int().min(0),
-});
+export const updateItemSchema = z
+  .object({
+    action: z.literal("updateItem"),
+    orderItemId: z.number().int().positive(),
+    quantity: z.number().int().min(0),
+  })
+  .strict();
 
-export const removeItemSchema = z.object({
-  action: z.literal("removeItem"),
-  orderItemId: z.number().int().positive(),
-  voidReason: z.string().optional().nullable(),
-});
+export const removeItemSchema = z
+  .object({
+    action: z.literal("removeItem"),
+    orderItemId: z.number().int().positive(),
+    voidReason: z.string().optional().nullable(),
+  })
+  .strict();
 
-export const updateOrderMetaSchema = z.object({
-  action: z.literal("updateMeta"),
-  notes: z.string().optional().nullable(),
-  customerId: z.number().int().positive().optional().nullable(),
-  discountAmount: optionalPaisaSchema.optional(),
-  adjustment: optionalPaisaSchema.optional(),
-  discountPercent: z.number().min(0).max(100).optional(),
-  taxPercent: z.number().min(0).max(100).optional(),
-});
+export const ORDER_META_NOTES_MAX_LENGTH = 2000;
+
+/**
+ * SEC-04A safe metadata allowlist for the generic order update path.
+ *
+ * Only plain, non-financial, non-state metadata is accepted: `notes` (stored
+ * verbatim as text, never interpreted as a command) and `customerId`. Every
+ * other order field — discounts, adjustments, tax, totals, status, payments,
+ * items, ownership, manager approval material — is rejected as an unknown
+ * field by the strict schema and must go through its dedicated endpoint.
+ * See docs/security/order-generic-update-boundary.md.
+ */
+export const updateOrderMetaSchema = z
+  .object({
+    action: z.literal("updateMeta"),
+    notes: z
+      .string()
+      .max(ORDER_META_NOTES_MAX_LENGTH)
+      .optional()
+      .nullable(),
+    customerId: z.number().int().positive().optional().nullable(),
+  })
+  .strict()
+  .refine(
+    (data) => data.notes !== undefined || data.customerId !== undefined,
+    { message: "At least one metadata field is required" },
+  );
 
 export const modifyOrderSchema = z.discriminatedUnion("action", [
   addItemSchema,
