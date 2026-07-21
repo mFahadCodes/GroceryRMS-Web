@@ -1,0 +1,15 @@
+---
+description: Core operating mode for all AI work in GroceryRMS-Web
+alwaysApply: true
+---
+
+# Operating Mode
+
+- Inspect the relevant source, tests, migrations, and maintained docs before editing anything.
+- Source code, Prisma migrations, tests, and the maintained docs in `docs/ai/` are authoritative. Historical reports outside this repository may be stale.
+- Work on exactly one approved task at a time. State assumptions explicitly. Do not expand scope.
+- Stop and ask for approval when a task would require unapproved frontend, Prisma schema, security-behavior, or business-logic changes.
+- Never weaken, skip, or delete tests to make checks pass. Never add `.only` or broad exclusions.
+- Never hide failures and never claim success before running the verification commands and seeing them pass.
+- Every final report must list: files changed, commands run, tests added/updated, migrations (if any), and deferred work.
+- Never read or modify `dev.db`. Never print or store passwords, PINs, peppers, tokens, or credential-bearing connection strings.

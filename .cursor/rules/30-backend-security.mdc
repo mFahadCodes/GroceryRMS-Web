@@ -1,0 +1,33 @@
+---
+description: Security invariants for authentication, sessions, passwords, and PINs
+globs: lib/security/**,lib/auth*,lib/pin*,lib/manager-pin*,lib/services/*session*,lib/services/*password*,lib/services/*pin*,app/api/auth/**,app/api/settings/users/**,app/api/settings/roles/**,prisma/seed/**
+alwaysApply: false
+---
+
+# Backend Security Invariants
+
+These behaviors exist on main (SEC-01A, SEC-01B, SEC-02A, SEC-03A) and must never be weakened:
+
+## Bootstrap and passwords
+- No fixed or default administrator credentials anywhere. Administrator bootstrap is environment-driven (`BOOTSTRAP_ADMIN_*`) and runs only when no admin exists.
+- Existing administrators are always preserved by re-running the seed; bootstrap never promotes or overwrites a non-admin account.
+- Bootstrapped administrators have `mustChangePassword = true`; mandatory password rotation blocks ordinary protected operations until completed.
+- Password changes are transactional: hash update, rotation-state clear, `authVersion` increment, session revocation, and audit event commit together.
+
+## Sessions
+- Sessions are database-authoritative (`UserSession`); JWT signature alone is never sufficient authorization.
+- `authVersion` mismatch invalidates tokens. Revoked, expired, missing, and stale sessions fail closed; database errors fail closed.
+- Credential, role, or permission changes (and deactivation/soft-delete) increment `authVersion` and revoke sessions in the same transaction as the mutation.
+
+## PINs
+- PIN hashing is versioned (`pin-v2$`) with a deployment-only pepper (`PIN_PEPPER`); the pepper has no fallback and is never stored or logged.
+- PIN verification requires an explicit target `userId`. There is **no global user lookup by PIN** and **no manager discovery by PIN**.
+- Persistent per-user and aggregate (IP-bucket) throttling with escalating lockouts is mandatory; success never clears aggregate attack history.
+- A PIN can never bypass mandatory password rotation.
+- Manager approval requires explicit `managerUserId` + `managerPin`, with role/permission re-checked after verification.
+
+## Disclosure
+- External authentication failures are generic (`PIN_VERIFICATION_FAILED`, etc.); do not reveal which check failed, counters, or account state.
+- No secrets in logs, audit events, API responses, tests, fixtures, examples, or documentation — no passwords, PINs, hashes, HMAC values, peppers, JWTs, session identifiers, or credential-bearing connection strings.
+
+Contracts are documented in `docs/security/`. Changing any invariant requires explicit human approval.
