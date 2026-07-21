@@ -1,6 +1,8 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { writeAuditRecord } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { hasPermission } from "@/lib/permissions";
+import { buildManagerApprovalAuditMetadata } from "@/lib/security/audit-metadata";
 import {
   digestManagerApprovalToken,
   generateManagerApprovalToken,
@@ -238,19 +240,17 @@ export async function issueManagerApprovalGrant(
         expiresAt,
       },
     });
-    await transaction.auditLog.create({
-      data: {
-        userId: input.requester.userId,
-        action: "MANAGER_APPROVAL_ISSUED",
-        tableName: "orders",
-        recordId: input.resourceId,
-        newValues: JSON.stringify({
-          approverUserId: currentApprover.id,
-          action: input.action,
-          resourceType: configuration.resourceType,
-          status: "issued",
-        }),
-      },
+    await writeAuditRecord(transaction, {
+      userId: input.requester.userId,
+      action: "MANAGER_APPROVAL_ISSUED",
+      tableName: "orders",
+      recordId: input.resourceId,
+      newValues: buildManagerApprovalAuditMetadata({
+        approverUserId: currentApprover.id,
+        action: input.action,
+        resourceType: configuration.resourceType,
+        status: "issued",
+      }),
     });
   });
 
@@ -415,19 +415,17 @@ export async function consumeManagerApprovalGrant(
   });
   if (consumed.count !== 1) throw invalidApproval();
 
-  await transaction.auditLog.create({
-    data: {
-      userId: input.requester.userId,
-      action: "MANAGER_APPROVAL_CONSUMED",
-      tableName: "orders",
-      recordId: input.resourceId,
-      newValues: JSON.stringify({
-        approverUserId: approver.id,
-        action: input.action,
-        resourceType: input.resourceType,
-        status: "consumed",
-      }),
-    },
+  await writeAuditRecord(transaction, {
+    userId: input.requester.userId,
+    action: "MANAGER_APPROVAL_CONSUMED",
+    tableName: "orders",
+    recordId: input.resourceId,
+    newValues: buildManagerApprovalAuditMetadata({
+      approverUserId: approver.id,
+      action: input.action,
+      resourceType: input.resourceType,
+      status: "consumed",
+    }),
   });
 
   return { approverUserId: approver.id };

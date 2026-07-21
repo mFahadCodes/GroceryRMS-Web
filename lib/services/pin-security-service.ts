@@ -1,5 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { writeAuditRecord } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { buildPinChangedAuditMetadata } from "@/lib/security/audit-metadata";
 import {
   deriveThrottleKey,
   hashPinV2,
@@ -423,13 +425,11 @@ async function writeAudit(
     reason: string;
   },
 ) {
-  await store.auditLog.create({
-    data: {
-      userId: input.actorUserId ?? null,
-      action: input.action,
-      tableName: "users",
-      recordId: input.targetUserId ?? null,
-      newValues: JSON.stringify({ reason: input.reason }),
-    },
+  await writeAuditRecord(store, {
+    userId: input.actorUserId ?? null,
+    action: input.action,
+    tableName: "users",
+    recordId: input.targetUserId ?? null,
+    newValues: buildPinChangedAuditMetadata(input.reason),
   });
 }

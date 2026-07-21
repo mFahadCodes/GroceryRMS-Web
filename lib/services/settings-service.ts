@@ -1,6 +1,8 @@
 import bcrypt from "bcryptjs";
+import { writeAuditRecord } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { SESSION_REVOCATION_REASONS } from "@/lib/security/auth-constants";
+import { buildPinChangedAuditMetadata } from "@/lib/security/audit-metadata";
 import {
   invalidateUserAuthentication,
   invalidateUsersForRoleChange,
@@ -236,14 +238,12 @@ export async function createUser(input: {
         where: { id: created.id },
         data: { pin: pinHash },
       });
-      await transaction.auditLog.create({
-        data: {
-          userId: securityContext?.actorUserId ?? null,
-          action: "PIN_CHANGED",
-          tableName: "users",
-          recordId: created.id,
-          newValues: JSON.stringify({ reason: "administrator-assigned" }),
-        },
+      await writeAuditRecord(transaction, {
+        userId: securityContext?.actorUserId ?? null,
+        action: "PIN_CHANGED",
+        tableName: "users",
+        recordId: created.id,
+        newValues: buildPinChangedAuditMetadata("administrator-assigned"),
       });
     }
     return transaction.user.findUniqueOrThrow({
@@ -307,16 +307,14 @@ export async function updateUser(id: number, input: {
       reason: revocationReason,
     });
     if (input.pin !== undefined) {
-      await transaction.auditLog.create({
-        data: {
-          userId: securityContext?.actorUserId ?? null,
-          action: "PIN_CHANGED",
-          tableName: "users",
-          recordId: id,
-          newValues: JSON.stringify({
-            reason: input.pin ? "administrator-changed" : "administrator-removed",
-          }),
-        },
+      await writeAuditRecord(transaction, {
+        userId: securityContext?.actorUserId ?? null,
+        action: "PIN_CHANGED",
+        tableName: "users",
+        recordId: id,
+        newValues: buildPinChangedAuditMetadata(
+          input.pin ? "administrator-changed" : "administrator-removed",
+        ),
       });
     }
     return transaction.user.findUniqueOrThrow({
