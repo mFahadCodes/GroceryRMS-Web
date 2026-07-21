@@ -8,6 +8,8 @@ import {
   voidOrderSchema,
 } from "../../../lib/validators/order.validators";
 
+const APPROVAL_TOKEN = "A".repeat(43);
+
 describe("explicit PIN request contracts", () => {
   it("accepts explicit userId plus PIN login", () => {
     expect(loginBodySchema.safeParse({ userId: 7, pin: "4826" }).success).toBe(true);
@@ -24,13 +26,15 @@ describe("explicit PIN request contracts", () => {
   it("rejects a PIN validation request without target user", () => {
     expect(validatePinSchema.safeParse({ pin: "4826" }).success).toBe(false);
   });
-  it("requires manager ID and PIN together for a discount", () => {
+  it("requires an approval token and rejects direct manager PIN for a discount", () => {
     expect(applyOrderDiscountSchema.safeParse({ discountPercent: 2, managerPin: "4826" }).success).toBe(false);
-    expect(applyOrderDiscountSchema.safeParse({ discountPercent: 2, managerUserId: 7, managerPin: "4826" }).success).toBe(true);
+    expect(applyOrderDiscountSchema.safeParse({ discountPercent: 2, managerUserId: 7, managerPin: "4826" }).success).toBe(false);
+    expect(applyOrderDiscountSchema.safeParse({ discountPercent: 2, managerApprovalToken: APPROVAL_TOKEN }).success).toBe(true);
   });
-  it("requires manager ID and PIN together for a void", () => {
+  it("requires an approval token and rejects direct manager PIN for a void", () => {
     expect(voidOrderSchema.safeParse({ reason: "test", managerUserId: 7 }).success).toBe(false);
-    expect(voidOrderSchema.safeParse({ reason: "test", managerUserId: 7, managerPin: "4826" }).success).toBe(true);
+    expect(voidOrderSchema.safeParse({ reason: "test", managerUserId: 7, managerPin: "4826" }).success).toBe(false);
+    expect(voidOrderSchema.safeParse({ reason: "test", managerApprovalToken: APPROVAL_TOKEN }).success).toBe(true);
   });
   it("rejects body-controlled terminal identity", () => {
     expect(loginBodySchema.safeParse({ userId: 7, pin: "4826", terminalId: 1 }).success).toBe(false);

@@ -32,6 +32,7 @@ export async function updateAuthoritativeJwt(
     input.token.permissions = input.user.permissions;
     input.token.sessionId = input.user.sessionId;
     input.token.authVersion = input.user.authVersion;
+    input.token.terminalId = null;
     input.token.mustChangePassword = input.user.mustChangePassword;
     input.token.lastActivityAt = now;
     input.token.expired = false;
@@ -51,6 +52,9 @@ export async function updateAuthoritativeJwt(
   }
 
   input.token.id = validation.principal.userId;
+  input.token.sessionId = validation.principal.sessionId;
+  input.token.authVersion = validation.principal.authVersion;
+  input.token.terminalId = validation.principal.terminalId;
   input.token.roleId = validation.principal.roleId;
   input.token.permissions = validation.principal.permissions;
   input.token.mustChangePassword = validation.principal.mustChangePassword;
