@@ -219,15 +219,19 @@ The frontend does not yet exercise this contract and must be updated:
 - Continue to send explicit `{ managerUserId, managerPin }`; anonymous manager-PIN
   payloads are not accepted.
 
-## Related finding: SEC-04 `updateMeta` bypass (deferred)
+## Related finding: SEC-04A generic update bypass (addressed on branch)
 
 While implementing SEC-02B, an authorization-bypassing path was confirmed in
 `PUT /api/orders/{id}` (`updateMeta` action, `app/api/orders/[id]/route.ts`). That
-handler still applies discounts and voids orders with `approvedByUserId:
-auth.session.user.id` (self-approval by the acting cashier) and can also set
-`discountAmount`/`adjustment` directly — entirely bypassing the manager approval grant
-required by the dedicated discount/void routes. This is the SEC-04 concern and is
-**deferred** to that task; SEC-02B intentionally does not modify this path.
+handler previously applied discounts and voids with `approvedByUserId:
+auth.session.user.id` (self-approval by the acting cashier) and could also set
+`discountAmount`/`adjustment` directly — entirely bypassing the manager approval
+grant required by the dedicated discount/void routes.
+
+SEC-04A addresses that bypass on branch `fix/sec-04a-order-action-bypass`
+(base `main` `4dd28a067b1937094878905e4832213077e86777`). See
+`docs/security/order-generic-update-boundary.md`. Do not mark SEC-04A complete
+until that branch is merged with passing gates.
 
 ## Test coverage
 

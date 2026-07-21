@@ -4,34 +4,37 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
 
 ## Baseline
 
-- Current `main` hash: `0b45c3081a50d0904961e8d50dd6ad5697b466e1`
-  (merge of PR #6, chore/cursor-workspace-migration)
+- Current `main` hash: `4dd28a067b1937094878905e4832213077e86777`
+  (merge of PR #8, chore/cursor-plugin-governance; includes merged SEC-02B)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
 ## In-flight (not merged)
 
-- **SEC-02B** — Terminal/session-bound manager approval grants. Implemented and
-  verified on branch `fix/sec-02b-manager-approval-grants` (base `main`
-  `0b45c3081a50d0904961e8d50dd6ad5697b466e1`); not merged. Adds
-  `POST /api/auth/manager-approvals` (one-time raw token, SHA-256 digest stored, 120s
-  TTL, action/order/requester/terminal-bound single-use grants) and transactional grant
-  consumption inside the discount/void order paths. Discovered a SEC-04 `updateMeta`
-  self-approval bypass in `PUT /api/orders/{id}` (deferred to SEC-04). See
-  `docs/security/manager-approval-grants.md`.
+- **SEC-04A** — Remove authorization-bypassing order actions from the generic
+  order update path. Implemented and verified on branch
+  `fix/sec-04a-order-action-bypass` (base `main`
+  `4dd28a067b1937094878905e4832213077e86777`); not merged. Converts
+  `PUT /api/orders/{id}` `updateMeta` into a strict metadata allowlist
+  (`notes`, `customerId`), removes magic note command dispatch, and rejects
+  protected financial/state/approval fields. Discount and void remain on their
+  dedicated grant-protected routes. See
+  `docs/security/order-generic-update-boundary.md`.
 
 ## Verified counts
 
-- Prisma migration head (main): `20260722_000000_add_pin_security_state`
+- Prisma migration head (main): `20260723_000000_add_manager_approval_grants`
   (history: `20260720_000000_baseline` → `20260720_010000_authoritative_sessions`
-  → `20260721_000000_add_password_rotation_state` → `20260722_000000_add_pin_security_state`)
-- Test files: **32** (all passing)
-- Tests: **316** (all passing, zero skipped, no `.only`)
-- On branch `fix/sec-02b-manager-approval-grants`: adds migration
-  `20260723_000000_add_manager_approval_grants` (manager_approval_grants table).
-  Verified branch totals: **42 test files, 406 tests, all passing, zero skipped**.
-  SEC-02B adds **10 focused files and 90 tests**.
+  → `20260721_000000_add_password_rotation_state` →
+  `20260722_000000_add_pin_security_state` →
+  `20260723_000000_add_manager_approval_grants`)
+- Test files on main: **42** (all passing)
+- Tests on main: **406** (all passing, zero skipped, no `.only`)
+- On branch `fix/sec-04a-order-action-bypass`: no schema/migration change.
+  Focused SEC-04A coverage: **7 files / 180 tests**. Verified branch totals:
+  **49 test files, 586 tests, all passing, zero skipped**.
+  SEC-04A adds **7 focused files and 180 tests**.
 - CI: GitHub Actions workflow **"Quality Gates"** (`.github/workflows/quality-gates.yml`)
   — npm ci, prisma generate, lint, typecheck, test, build on Node 22
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
@@ -43,26 +46,32 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
 - **SEC-03A** — authoritative database sessions, `authVersion` invalidation, transactional revocation
 - **SEC-01B** — mandatory password rotation for bootstrapped admins, transactional password change
 - **SEC-02A** — versioned peppered PIN hashing, explicit-user verification, persistent throttling and lockout
+- **SEC-02B** — terminal/session-bound manager approval grants for discount and void
+  (`docs/security/manager-approval-grants.md`)
+- Cursor plugin operating model (`docs/ai/PLUGIN_OPERATING_MODEL.md`)
 
 ## Backend contracts requiring future frontend changes
 
 - `POST /api/auth/change-password` and `mustChangePassword` session flag → password-rotation UI and forced redirect.
 - PIN login and `POST /api/auth/validate-pin` now require `{ userId, pin }` → explicit user selection UI (anonymous quick-login payloads no longer work).
 - Manager approvals require `{ managerUserId, managerPin }` → explicit manager selection UI.
-- SEC-02B (branch, not merged) adds `POST /api/auth/manager-approvals` returning a
-  one-time approval token that must be attached as `managerApprovalToken` to the
-  discount/void calls → explicit manager step-up UI plus one-time token handling
+- SEC-02B adds `POST /api/auth/manager-approvals` returning a one-time approval
+  token that must be attached as `managerApprovalToken` to discount/void calls →
+  explicit manager step-up UI plus one-time token handling
   (`docs/security/manager-approval-grants.md`).
+- SEC-04A (branch, not merged): clients must stop sending magic note commands
+  (`hold` / `recall` / `void:…`) or financial fields
+  (`discountAmount` / `adjustment` / `discountPercent` / `taxPercent`) to
+  `PUT /api/orders/{id}` `updateMeta`. Use the dedicated hold/recall/discount/
+  void/tax/adjustment routes instead. Plain `notes` and `customerId` remain
+  valid (`docs/security/order-generic-update-boundary.md`).
 
 ## Current limitations
 
 - Frontend is incomplete and behind the backend contracts above.
-- SEC-02B is implemented and verified on `fix/sec-02b-manager-approval-grants` but not
-  merged; SEC-04, SEC-05 and the P0 business-integrity items are not implemented (see
-  `SECURITY_ROADMAP.md`).
-- A SEC-04 authorization bypass is confirmed: `PUT /api/orders/{id}` `updateMeta`
-  self-approves discounts/voids and sets discount/adjustment directly, sidestepping the
-  manager approval grant. Deferred to SEC-04.
+- SEC-04A is implemented and verified on `fix/sec-04a-order-action-bypass` but
+  not merged; broader SEC-04, SEC-05, and the P0 business-integrity items are
+  not complete (see `SECURITY_ROADMAP.md`).
 - SQLite only; PostgreSQL production migration and deployment hardening are deferred.
 - Terminal-level PIN throttling is deliberately skipped until a trustworthy terminal binding exists (IP throttling is mandatory).
 
