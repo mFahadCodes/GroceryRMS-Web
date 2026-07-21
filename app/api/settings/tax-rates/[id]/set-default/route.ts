@@ -21,16 +21,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
   });
   if (!taxRate) return fail("Tax rate not found", "TAX_RATE_NOT_FOUND", 404);
 
-  await upsertSetting("DefaultTaxRateId", {
-    value: String(taxRateId),
-    dataType: "int",
-    group: "Tax",
-  });
+  await upsertSetting(
+    "DefaultTaxRateId",
+    {
+      value: String(taxRateId),
+      dataType: "int",
+      group: "Tax",
+    },
+    { actorUserId: auth.session.user.id },
+  );
 
   await auditFromRequest(request, {
     userId: auth.session.user.id,
     action: "SET_DEFAULT_TAX_RATE",
-    tableName: "tax_rates",
     recordId: taxRateId,
     newValues: { defaultTaxRateId: taxRateId },
   });

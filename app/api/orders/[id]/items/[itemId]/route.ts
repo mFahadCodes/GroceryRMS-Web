@@ -6,6 +6,10 @@ import { serializeRecord } from "@/lib/api/serialize";
 import { fail, ok } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
 import {
+  buildOrderItemQuantityAuditMetadata,
+  summarizeFreeTextReason,
+} from "@/lib/security/audit-metadata";
+import {
   calculateTotals,
   getOrderById,
   removeOrderItem,
@@ -44,9 +48,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     await auditFromRequest(request, {
       userId: auth.session.user.id,
       action: "PATCH_ORDER_ITEM",
-      tableName: "order_items",
       recordId: orderItemId,
-      newValues: parsed.data,
+      newValues: {
+        ...buildOrderItemQuantityAuditMetadata({
+          orderItemId,
+          quantity: parsed.data.quantity,
+        }),
+        ...summarizeFreeTextReason(parsed.data.voidReason),
+      },
     });
     return ok(serializeRecord(order));
   } catch (error) {
@@ -76,7 +85,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     await auditFromRequest(request, {
       userId: auth.session.user.id,
       action: "DELETE_ORDER_ITEM",
-      tableName: "order_items",
       recordId: orderItemId,
     });
     return ok(serializeRecord(order));

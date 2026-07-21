@@ -4,7 +4,7 @@ import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { serializeRecord } from "@/lib/api/serialize";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { refundOrder } from "@/lib/services/order-service";
 import { refundOrderSchema } from "@/lib/validators/order.validators";
 
@@ -33,14 +33,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       terminalId: parsed.data.terminalId,
       cashierId: auth.session.user.id,
       referenceNo: parsed.data.referenceNo,
-    });
-
-    await auditFromRequest(request, {
-      userId: auth.session.user.id,
-      action: "REFUND_ORDER",
-      tableName: "orders",
-      recordId: orderId,
-      newValues: { reason: parsed.data.reason, amount: parsed.data.amount },
+      // SEC-05B: the REFUND_ORDER audit is transaction-required and written
+      // inside the refund transaction; the free-text reason stays on the
+      // refund order record and is only summarized in audit metadata.
+      auditIpAddress: resolveClientIp(request),
     });
 
     return ok(serializeRecord(result));

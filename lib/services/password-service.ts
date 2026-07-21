@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import type { PrismaClient } from "@prisma/client";
-import { writeAuditRecord } from "@/lib/audit";
+import { writeRequiredAudit } from "@/lib/audit";
 import { buildPasswordChangedAuditMetadata } from "@/lib/security/audit-metadata";
 import { SESSION_REVOCATION_REASONS } from "../security/auth-constants";
 import { validatePasswordPolicy } from "../security/password-policy";
@@ -91,10 +91,9 @@ export async function changeOwnPassword(
         revokedReason: SESSION_REVOCATION_REASONS.PASSWORD_CHANGE,
       },
     });
-    await writeAuditRecord(transaction, {
+    await writeRequiredAudit(transaction, {
       userId: user.id,
       action: "PASSWORD_CHANGED",
-      tableName: "users",
       recordId: user.id,
       newValues: buildPasswordChangedAuditMetadata(),
       ipAddress: input.ipAddress ?? null,

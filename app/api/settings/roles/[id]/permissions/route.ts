@@ -3,7 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { replaceRolePermissions } from "@/lib/services/settings-service";
 import { updateRolePermissionsSchema } from "@/lib/validators/settings.validators";
 
@@ -21,13 +21,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
-  const updated = await replaceRolePermissions(roleId, parsed.data.permissions);
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "REPLACE_ROLE_PERMISSIONS",
-    tableName: "role_permissions",
-    recordId: roleId,
-    newValues: parsed.data.permissions,
+  // SEC-05B: the REPLACE_ROLE_PERMISSIONS audit is transaction-required and
+  // written inside the service transaction.
+  const updated = await replaceRolePermissions(roleId, parsed.data.permissions, {
+    actorUserId: auth.session.user.id,
+    ipAddress: resolveClientIp(request),
   });
   return ok(updated);
 }

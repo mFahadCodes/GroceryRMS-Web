@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { writeAuditRecord } from "@/lib/audit";
+import { writeRequiredAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { hasPermission } from "@/lib/permissions";
 import { buildManagerApprovalAuditMetadata } from "@/lib/security/audit-metadata";
@@ -240,10 +240,9 @@ export async function issueManagerApprovalGrant(
         expiresAt,
       },
     });
-    await writeAuditRecord(transaction, {
+    await writeRequiredAudit(transaction, {
       userId: input.requester.userId,
       action: "MANAGER_APPROVAL_ISSUED",
-      tableName: "orders",
       recordId: input.resourceId,
       newValues: buildManagerApprovalAuditMetadata({
         approverUserId: currentApprover.id,
@@ -415,10 +414,9 @@ export async function consumeManagerApprovalGrant(
   });
   if (consumed.count !== 1) throw invalidApproval();
 
-  await writeAuditRecord(transaction, {
+  await writeRequiredAudit(transaction, {
     userId: input.requester.userId,
     action: "MANAGER_APPROVAL_CONSUMED",
-    tableName: "orders",
     recordId: input.resourceId,
     newValues: buildManagerApprovalAuditMetadata({
       approverUserId: approver.id,

@@ -4,8 +4,8 @@ import { PERMS } from "@/lib/api/permissions";
 import { requireSession } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
 import { hasPermission } from "@/lib/permissions";
-import { auditFromRequest } from "@/lib/audit";
 import { serializeRecord } from "@/lib/api/serialize";
+import { resolveClientIp } from "@/lib/client-ip";
 import { applyPartialPayment } from "@/lib/services/order-service";
 import { partialPaymentSchema } from "@/lib/validators/order.validators";
 
@@ -42,14 +42,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       amount: parsed.data.amount,
       referenceNo: parsed.data.referenceNo,
       userId: auth.session.user.id,
-    });
-
-    await auditFromRequest(request, {
-      userId: auth.session.user.id,
-      action: "PARTIAL_PAYMENT",
-      tableName: "orders",
-      recordId: orderId,
-      newValues: parsed.data,
+      // SEC-05B: the PARTIAL_PAYMENT audit is transaction-required and
+      // written inside the payment transaction by the order service.
+      auditIpAddress: resolveClientIp(request),
     });
 
     return ok(serializeRecord(result));

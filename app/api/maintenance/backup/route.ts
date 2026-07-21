@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import fs from "node:fs";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
-import { auditFromRequest } from "@/lib/audit";
+import { accessAuditFromRequest } from "@/lib/audit";
 import { createBackupFile } from "@/lib/services/maintenance-service";
 
 export async function POST(request: NextRequest) {
@@ -12,10 +12,9 @@ export async function POST(request: NextRequest) {
   const { filePath, fileName } = await createBackupFile();
   const buffer = fs.readFileSync(filePath);
 
-  await auditFromRequest(request, {
+  await accessAuditFromRequest(request, {
     userId: auth.session.user.id,
     action: "DB_BACKUP",
-    tableName: "database",
     newValues: { fileName },
   });
 

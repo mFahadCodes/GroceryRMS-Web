@@ -5,6 +5,12 @@ import { fail, ok } from "@/lib/api-response";
 import { serializeRecord } from "@/lib/api/serialize";
 import { auditFromRequest } from "@/lib/audit";
 import {
+  buildOrderItemAddedAuditMetadata,
+  buildOrderItemQuantityAuditMetadata,
+  buildOrderItemVoidAuditMetadata,
+  buildOrderMetadataUpdateAuditMetadata,
+} from "@/lib/security/audit-metadata";
+import {
   addItemToOrder,
   calculateTotals,
   getOrderById,
@@ -83,9 +89,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         await auditFromRequest(request, {
           userId: auth.session.user.id,
           action: "ADD_ORDER_ITEM",
-          tableName: "order_items",
           recordId: orderId,
-          newValues: parsed.data,
+          newValues: buildOrderItemAddedAuditMetadata(parsed.data),
         });
         break;
       }
@@ -98,9 +103,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         await auditFromRequest(request, {
           userId: auth.session.user.id,
           action: "UPDATE_ORDER_ITEM",
-          tableName: "order_items",
           recordId: parsed.data.orderItemId,
-          newValues: parsed.data,
+          newValues: buildOrderItemQuantityAuditMetadata(parsed.data),
         });
         break;
       }
@@ -113,9 +117,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         await auditFromRequest(request, {
           userId: auth.session.user.id,
           action: "VOID_ORDER_ITEM",
-          tableName: "order_items",
           recordId: parsed.data.orderItemId,
-          newValues: parsed.data,
+          newValues: buildOrderItemVoidAuditMetadata(parsed.data),
         });
         break;
       }
@@ -127,9 +130,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         await auditFromRequest(request, {
           userId: auth.session.user.id,
           action: "UPDATE_ORDER_META",
-          tableName: "orders",
           recordId: orderId,
-          newValues: parsed.data,
+          newValues: buildOrderMetadataUpdateAuditMetadata(parsed.data),
         });
         break;
       }

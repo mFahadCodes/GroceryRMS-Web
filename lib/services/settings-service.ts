@@ -1,8 +1,13 @@
 import bcrypt from "bcryptjs";
-import { writeAuditRecord } from "@/lib/audit";
+import { writeRequiredAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { SESSION_REVOCATION_REASONS } from "@/lib/security/auth-constants";
-import { buildPinChangedAuditMetadata } from "@/lib/security/audit-metadata";
+import {
+  buildPinChangedAuditMetadata,
+  buildRolePermissionsAuditMetadata,
+  buildSettingUpsertAuditMetadata,
+  buildUserAccountAuditMetadata,
+} from "@/lib/security/audit-metadata";
 import {
   invalidateUserAuthentication,
   invalidateUsersForRoleChange,
@@ -48,23 +53,41 @@ export async function getSettingByKey(key: string) {
 export async function upsertSetting(
   key: string,
   input: { value: string; dataType?: string | null; description?: string | null; group?: string | null },
+  securityContext: { actorUserId: number | null; ipAddress?: string | null },
 ) {
-  return prisma.appSetting.upsert({
-    where: { key },
-    update: {
-      value: input.value,
-      dataType: input.dataType ?? null,
-      description: input.description ?? null,
-      group: input.group ?? null,
-      isActive: true,
-    },
-    create: {
-      key,
-      value: input.value,
-      dataType: input.dataType ?? "string",
-      description: input.description ?? null,
-      group: input.group ?? "General",
-    },
+  // SEC-05B: configuration changes may carry credentials or security-relevant
+  // values; the upsert and its audit commit or roll back together. Only the
+  // key, type, and value presence are audited — never the raw value.
+  return prisma.$transaction(async (transaction) => {
+    const setting = await transaction.appSetting.upsert({
+      where: { key },
+      update: {
+        value: input.value,
+        dataType: input.dataType ?? null,
+        description: input.description ?? null,
+        group: input.group ?? null,
+        isActive: true,
+      },
+      create: {
+        key,
+        value: input.value,
+        dataType: input.dataType ?? "string",
+        description: input.description ?? null,
+        group: input.group ?? "General",
+      },
+    });
+    await writeRequiredAudit(transaction, {
+      userId: securityContext.actorUserId,
+      action: "UPSERT_SETTING",
+      recordId: setting.id,
+      newValues: buildSettingUpsertAuditMetadata({
+        settingKey: key,
+        dataType: input.dataType ?? "string",
+        value: input.value,
+      }),
+      ipAddress: securityContext.ipAddress ?? null,
+    });
+    return setting;
   });
 }
 
@@ -216,7 +239,7 @@ export async function createUser(input: {
   roleId: number;
   phone?: string | null;
   email?: string | null;
-}, securityContext?: { actorUserId: number }, client: typeof prisma = prisma) {
+}, securityContext: { actorUserId: number; ipAddress?: string | null }, client: typeof prisma = prisma) {
   const passwordHash = await bcrypt.hash(input.password, 12);
   if (input.pin) assertPinCreationAllowed(input.pin);
   return client.$transaction(async (transaction) => {
@@ -238,14 +261,26 @@ export async function createUser(input: {
         where: { id: created.id },
         data: { pin: pinHash },
       });
-      await writeAuditRecord(transaction, {
-        userId: securityContext?.actorUserId ?? null,
+      await writeRequiredAudit(transaction, {
+        userId: securityContext.actorUserId,
         action: "PIN_CHANGED",
-        tableName: "users",
         recordId: created.id,
         newValues: buildPinChangedAuditMetadata("administrator-assigned"),
       });
     }
+    await writeRequiredAudit(transaction, {
+      userId: securityContext.actorUserId,
+      action: "CREATE_USER",
+      recordId: created.id,
+      newValues: buildUserAccountAuditMetadata({
+        username: input.username,
+        roleId: input.roleId,
+        fieldsChanged: [],
+        passwordChanged: true,
+        pinChanged: Boolean(input.pin),
+      }),
+      ipAddress: securityContext.ipAddress ?? null,
+    });
     return transaction.user.findUniqueOrThrow({
       where: { id: created.id },
       select: safeManagedUserSelect,
@@ -261,7 +296,7 @@ export async function updateUser(id: number, input: {
   phone?: string | null;
   email?: string | null;
   isActive?: boolean;
-}, securityContext?: { actorUserId: number }, client: typeof prisma = prisma) {
+}, securityContext: { actorUserId: number; ipAddress?: string | null }, client: typeof prisma = prisma) {
   const passwordHash =
     input.password !== undefined
       ? await bcrypt.hash(input.password, 12)
@@ -292,38 +327,52 @@ export async function updateUser(id: number, input: {
           ? SESSION_REVOCATION_REASONS.ACCOUNT_STATUS_CHANGE
           : null;
 
-  if (!revocationReason) {
-    return client.user.update({
-      where: { id },
-      data,
-      select: safeManagedUserSelect,
-    });
-  }
+  // Field names only — never values. Credential fields become booleans.
+  const updateAuditMetadata = buildUserAccountAuditMetadata({
+    ...(input.roleId !== undefined ? { roleId: input.roleId } : {}),
+    fieldsChanged: (
+      ["username", "fullName", "roleId", "phone", "email", "isActive"] as const
+    ).filter((field) => input[field] !== undefined),
+    passwordChanged: input.password !== undefined,
+    pinChanged: input.pin !== undefined,
+    ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+  });
 
   return client.$transaction(async (transaction) => {
     await transaction.user.update({ where: { id }, data });
-    await invalidateUserAuthentication(transaction, {
-      userId: id,
-      reason: revocationReason,
-    });
-    if (input.pin !== undefined) {
-      await writeAuditRecord(transaction, {
-        userId: securityContext?.actorUserId ?? null,
-        action: "PIN_CHANGED",
-        tableName: "users",
-        recordId: id,
-        newValues: buildPinChangedAuditMetadata(
-          input.pin ? "administrator-changed" : "administrator-removed",
-        ),
+    if (revocationReason) {
+      await invalidateUserAuthentication(transaction, {
+        userId: id,
+        reason: revocationReason,
       });
+      if (input.pin !== undefined) {
+        await writeRequiredAudit(transaction, {
+          userId: securityContext.actorUserId,
+          action: "PIN_CHANGED",
+          recordId: id,
+          newValues: buildPinChangedAuditMetadata(
+            input.pin ? "administrator-changed" : "administrator-removed",
+          ),
+        });
+      }
     }
+    await writeRequiredAudit(transaction, {
+      userId: securityContext.actorUserId,
+      action: "UPDATE_USER",
+      recordId: id,
+      newValues: updateAuditMetadata,
+      ipAddress: securityContext.ipAddress ?? null,
+    });
     return transaction.user.findUniqueOrThrow({
       where: { id },
       select: safeManagedUserSelect,
     });
   });
 }
-export async function deleteUser(id: number) {
+export async function deleteUser(
+  id: number,
+  securityContext: { actorUserId: number; ipAddress?: string | null },
+) {
   return prisma.$transaction(async (transaction) => {
     await transaction.user.update({
       where: { id },
@@ -332,6 +381,16 @@ export async function deleteUser(id: number) {
     await invalidateUserAuthentication(transaction, {
       userId: id,
       reason: SESSION_REVOCATION_REASONS.ACCOUNT_STATUS_CHANGE,
+    });
+    await writeRequiredAudit(transaction, {
+      userId: securityContext.actorUserId,
+      action: "DELETE_USER",
+      recordId: id,
+      newValues: buildUserAccountAuditMetadata({
+        fieldsChanged: ["isActive"],
+        isActive: false,
+      }),
+      ipAddress: securityContext.ipAddress ?? null,
     });
     return transaction.user.findUniqueOrThrow({
       where: { id },
@@ -365,6 +424,7 @@ async function securePinHashOrThrow(userId: number, pin: string) {
 export async function replaceRolePermissions(
   roleId: number,
   permissions: Array<{ permissionId: number; accessLevel: number }>,
+  securityContext: { actorUserId: number; ipAddress?: string | null },
 ) {
   return prisma.$transaction(async (tx) => {
     await tx.rolePermission.deleteMany({ where: { roleId } });
@@ -376,6 +436,16 @@ export async function replaceRolePermissions(
     await invalidateUsersForRoleChange(tx, {
       roleId,
       reason: SESSION_REVOCATION_REASONS.ROLE_PERMISSIONS_CHANGE,
+    });
+    await writeRequiredAudit(tx, {
+      userId: securityContext.actorUserId,
+      action: "REPLACE_ROLE_PERMISSIONS",
+      recordId: roleId,
+      newValues: buildRolePermissionsAuditMetadata({
+        roleId,
+        permissions,
+      }),
+      ipAddress: securityContext.ipAddress ?? null,
     });
     return tx.role.findUnique({
       where: { id: roleId },

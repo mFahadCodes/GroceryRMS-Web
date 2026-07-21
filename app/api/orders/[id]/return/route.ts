@@ -3,8 +3,8 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
 import { serializeRecord } from "@/lib/api/serialize";
+import { resolveClientIp } from "@/lib/client-ip";
 import { returnOrderItems } from "@/lib/services/order-service";
 import { returnOrderItemsSchema } from "@/lib/validators/order.validators";
 
@@ -32,14 +32,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       items: parsed.data.items,
       refundAmount: parsed.data.refundAmount,
       cashierId: auth.session.user.id,
-    });
-
-    await auditFromRequest(request, {
-      userId: auth.session.user.id,
-      action: "RETURN",
-      tableName: "orders",
-      recordId: orderId,
-      newValues: parsed.data,
+      // SEC-05B: the RETURN audit is transaction-required and written inside
+      // the return transaction; per-item free-text reasons stay on the
+      // refund order items and are never copied into audit metadata.
+      auditIpAddress: resolveClientIp(request),
     });
 
     return ok(serializeRecord(result));
