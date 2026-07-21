@@ -103,3 +103,25 @@ export function buildOrderDiscountAuditMetadata(input: {
     approvedByUserId: input.approvedByUserId,
   };
 }
+
+export type SettingUpsertAuditMetadata = {
+  settingKey: string;
+  dataType: string;
+  valuePresent: boolean;
+};
+
+/**
+ * Settings values may hold API keys / peppers / opaque secrets. Audit only
+ * identifiers and presence — never the raw setting value.
+ */
+export function buildSettingUpsertAuditMetadata(input: {
+  settingKey: string;
+  dataType: string;
+  value: unknown;
+}): SettingUpsertAuditMetadata {
+  return {
+    settingKey: input.settingKey,
+    dataType: input.dataType,
+    valuePresent: input.value !== undefined && input.value !== null && input.value !== "",
+  };
+}

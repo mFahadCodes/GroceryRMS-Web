@@ -27,6 +27,7 @@ const SENSITIVE_KEYS = new Set([
   "currentpassword",
   "newpassword",
   "oldpassword",
+  "confirmpassword",
   "passwordhash",
   "bootstrappassword",
   "temporarypassword",
@@ -36,6 +37,10 @@ const SENSITIVE_KEYS = new Set([
   "managerpin",
   "adminpin",
   "bootstrappin",
+  "newpin",
+  "oldpin",
+  "currentpin",
+  "confirmpin",
   "pinhash",
   "pinpepper",
   "pepper",
@@ -45,7 +50,10 @@ const SENSITIVE_KEYS = new Set([
   "idtoken",
   "approvaltoken",
   "managerapprovaltoken",
+  "rawtoken",
   "tokenhash",
+  "tokendigest",
+  "approvaltokendigest",
   "jwt",
   "bearer",
   "authorization",
@@ -75,7 +83,29 @@ const SENSITIVE_KEYS = new Set([
   "headers",
   "body",
   "authversion",
+  "hash",
+  "digest",
+  "stack",
+  "stacktrace",
+  "trace",
 ]);
+
+/**
+ * Compound key suffixes (normalized). Exact safe near-matches are checked first
+ * so fields like passwordChangedAt / tokenCount remain visible.
+ */
+const SENSITIVE_KEY_SUFFIXES = [
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "apikey",
+  "privatekey",
+  "digest",
+  "pepper",
+  "pin",
+  "hash",
+] as const;
 
 /** Normalized keys that must remain visible (safe near-matches). */
 const SAFE_NEAR_MATCH_KEYS = new Set([
@@ -114,6 +144,9 @@ const BASIC_AUTH_LIKE = /^Basic\s+[A-Za-z0-9+/=_-]+$/i;
 const PEM_PRIVATE_KEY = /-----BEGIN[^-]*PRIVATE KEY-----/i;
 const COOKIE_HEADER_LIKE =
   /(?:^|;\s*)(?:session|sid|auth|token|jwt)=[^;]+/i;
+/** Opaque high-entropy secrets (e.g. manager-approval tokens), not short IDs. */
+const OPAQUE_TOKEN_LIKE = /^[A-Za-z0-9_-]{40,256}$/;
+const BCRYPT_LIKE = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
 
 export function normalizeAuditKey(key: string): string {
   return key.toLowerCase().replace(/[\s\-_.[\]]+/g, "");
@@ -123,6 +156,11 @@ export function isSensitiveAuditKey(key: string): boolean {
   const normalized = normalizeAuditKey(key);
   if (SAFE_NEAR_MATCH_KEYS.has(normalized)) return false;
   if (SENSITIVE_KEYS.has(normalized)) return true;
+  for (const suffix of SENSITIVE_KEY_SUFFIXES) {
+    if (normalized.length > suffix.length && normalized.endsWith(suffix)) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -179,6 +217,8 @@ export function sanitizeSensitiveStringValue(value: string): string {
   if (BASIC_AUTH_LIKE.test(trimmed)) return AUDIT_REDACTED;
   if (JWT_LIKE.test(trimmed) && trimmed.length >= 20) return AUDIT_REDACTED;
   if (PEM_PRIVATE_KEY.test(value)) return AUDIT_REDACTED;
+  if (BCRYPT_LIKE.test(trimmed)) return AUDIT_REDACTED;
+  if (OPAQUE_TOKEN_LIKE.test(trimmed)) return AUDIT_REDACTED;
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed)) {
     return redactCredentialBearingUrl(trimmed);
   }
@@ -240,6 +280,15 @@ function isErrorLike(value: unknown): boolean {
   );
 }
 
+/** Plain objects that look like serialized Error payloads (e.g. historical rows). */
+function isErrorShapedPlainObject(
+  value: Record<string, unknown>,
+): boolean {
+  if (typeof value.message !== "string") return false;
+  const stack = value.stack;
+  return typeof stack === "string" || stack === null;
+}
+
 type SanitizeContext = {
   depth: number;
   seen: WeakSet<object>;
@@ -299,6 +348,11 @@ function sanitizeValue(value: unknown, context: SanitizeContext): unknown {
     if (!isPlainObject(value)) {
       // Request/Response/Headers/Map/Set/Prisma client/etc.
       return AUDIT_UNSUPPORTED;
+    }
+
+    // Historical / non-Error error-shaped objects (message + stack).
+    if (isErrorShapedPlainObject(value)) {
+      return sanitizeAuditError(value);
     }
 
     const keys = Object.keys(value).sort();

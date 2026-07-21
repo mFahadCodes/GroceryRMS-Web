@@ -58,6 +58,15 @@ describe("audit sanitizer value pattern redaction", () => {
     ).toBe(AUDIT_REDACTED);
   });
 
+  it("redacts opaque high-entropy tokens and bcrypt digests", () => {
+    expect(sanitizeSensitiveStringValue("A".repeat(43))).toBe(AUDIT_REDACTED);
+    expect(
+      sanitizeSensitiveStringValue(
+        "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      ),
+    ).toBe(AUDIT_REDACTED);
+  });
+
   it("preserves ordinary safe text, order numbers, and ids", () => {
     const sanitized = sanitizeAuditMetadata({
       note: "Deliver to gate B",

@@ -65,6 +65,25 @@ describe("audit sanitizer key redaction", () => {
   });
 
   it.each([
+    ["confirmPassword", "confirm-me"],
+    ["newPin", "4826"],
+    ["old_pin", "1111"],
+    ["hash", "$2a$10$abcdefghijklmnopqrstuv"],
+    ["digest", "abc123digest"],
+    ["stack", "at secret-frame"],
+    ["userPassword", "x"],
+    ["api_secret", "y"],
+  ])("redacts compound or artifact key %s", (inputKey, raw) => {
+    expect(isSensitiveAuditKey(inputKey)).toBe(true);
+    const sanitized = sanitizeAuditMetadata({ [inputKey]: raw }) as Record<
+      string,
+      unknown
+    >;
+    expect(sanitized[inputKey]).toBe(AUDIT_REDACTED);
+    expect(JSON.stringify(sanitized)).not.toContain(raw);
+  });
+
+  it.each([
     "passwordChangedAt",
     "passwordChanged",
     "reauthenticationRequired",

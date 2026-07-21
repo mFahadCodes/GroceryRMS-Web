@@ -30,9 +30,9 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
 - Test files on main: **49** (all passing)
 - Tests on main: **586** (all passing, zero skipped, no `.only`)
 - On branch `fix/sec-05a-audit-redaction`: no schema/migration change.
-  Focused SEC-05A coverage: **9 files / 107 tests**. Verified branch totals:
-  **58 test files, 693 tests, all passing, zero skipped**.
-  SEC-05A adds **9 focused files and 107 tests**.
+  Focused SEC-05A coverage: **9 files / 117+ tests**. Verified branch totals:
+  **58 test files, 703 tests, all passing, zero skipped**.
+  SEC-05A adds **9 focused files and ~117 tests**.
 - CI: GitHub Actions workflow **"Quality Gates"** (`.github/workflows/quality-gates.yml`)
   — npm ci, prisma generate, lint, typecheck, test, build on Node 22
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0

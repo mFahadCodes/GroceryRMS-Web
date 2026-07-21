@@ -171,6 +171,11 @@ logged.
 - Ordinary routes may still pass broad `parsed.data` objects; the sanitizer
   redacts sensitive keys/values, but narrowing every caller to explicit
   allowlists is deferred.
+- Setting upserts use an explicit builder that records key/dataType/presence
+  only — never the raw setting value.
+- Free-text void/discount reasons remain free-text; recognizable secret shapes
+  (Bearer/JWT/opaque 40+ tokens/bcrypt) are redacted, but short opaque PINs
+  typed into reasons may still require operational discipline.
 - Inconsistent high-risk “best-effort vs transactional” audit policy across
   modules should be standardized as SEC-05B.
 - Physical scrubbing of pre-SEC-05A audit rows is deferred.

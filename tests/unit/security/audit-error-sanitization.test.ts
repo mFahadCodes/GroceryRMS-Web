@@ -19,6 +19,21 @@ describe("audit error sanitization", () => {
     expect(sanitized.stack).toBeUndefined();
   });
 
+  it("strips stack from error-shaped plain objects", () => {
+    const sanitized = sanitizeAuditMetadata({
+      err: {
+        name: "Error",
+        message: "failed",
+        stack: "at /secret/path.ts:1",
+      },
+    }) as {
+      err: { message: string; stack?: string; name: string };
+    };
+    expect(sanitized.err.message).toBe("failed");
+    expect(sanitized.err.stack).toBeUndefined();
+    expect(JSON.stringify(sanitized)).not.toContain("/secret/path");
+  });
+
   it("redacts passwords and tokens in error messages", () => {
     const withBearer = sanitizeAuditError(
       new Error("Bearer SYNTHETIC.JWT.TOKENVALUE"),
