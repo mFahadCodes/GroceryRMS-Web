@@ -8,6 +8,7 @@ import { auditFromRequest } from "@/lib/audit";
 import { resolveManagerApproval } from "@/lib/manager-pin";
 import { applyOrderDiscount } from "@/lib/services/order-service";
 import { applyOrderDiscountSchema } from "@/lib/validators/order.validators";
+import { resolveClientIp } from "@/lib/client-ip";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -32,10 +33,27 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     permissions: auth.session.user.permissions,
     permissionName: PERMS.APPLY_DISCOUNTS,
     minimumLevel: DISCOUNT_MANAGER_LEVEL,
+    managerUserId: parsed.data.managerUserId,
     managerPin: parsed.data.managerPin,
+    clientIp: resolveClientIp(request),
   });
 
   if (!approval.ok) {
+    if (approval.code === "MANAGER_PIN_THROTTLED") {
+      const response = fail(
+        "Manager PIN verification temporarily unavailable",
+        approval.code,
+        429,
+      );
+      response.headers.set(
+        "Retry-After",
+        String(approval.retryAfterSeconds ?? 60),
+      );
+      return response;
+    }
+    if (approval.code === "PIN_SECURITY_UNAVAILABLE") {
+      return fail("PIN security is unavailable", approval.code, 503);
+    }
     const message =
       approval.code === "MANAGER_PIN_REQUIRED"
         ? "Manager PIN required for this discount"
@@ -49,7 +67,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       discountAmount: parsed.data.discountAmount,
       discountPercent: parsed.data.discountPercent,
       approvedByUserId:
-        parsed.data.approvedByUserId ?? approval.approvedByUserId,
+        approval.approvedByUserId,
     });
 
     await auditFromRequest(request, {
@@ -58,7 +76,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       tableName: "orders",
       recordId: orderId,
       newValues: {
-        ...parsed.data,
+        discountAmount: parsed.data.discountAmount,
+        discountPercent: parsed.data.discountPercent,
+        reason: parsed.data.reason,
         approvedByUserId: approval.approvedByUserId,
       },
     });

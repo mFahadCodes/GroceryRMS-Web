@@ -1,17 +1,26 @@
-import { checkPermission, hasPermission } from "@/lib/permissions";
-import { hashPin } from "@/lib/pin";
-import { prisma } from "@/lib/prisma";
+import { hasPermission } from "@/lib/permissions";
+import { verifyUserPin } from "@/lib/services/pin-security-service";
 
 export type ManagerApprovalResult =
   | { ok: true; approvedByUserId: number }
-  | { ok: false; code: "MANAGER_PIN_REQUIRED" | "INVALID_MANAGER_PIN" };
+  | {
+      ok: false;
+      code:
+        | "MANAGER_PIN_REQUIRED"
+        | "INVALID_MANAGER_PIN"
+        | "MANAGER_PIN_THROTTLED"
+        | "PIN_SECURITY_UNAVAILABLE";
+      retryAfterSeconds?: number;
+    };
 
 export async function resolveManagerApproval(input: {
   userId: number;
   permissions: string[];
   permissionName: string;
   minimumLevel: number;
+  managerUserId?: number;
   managerPin?: string;
+  clientIp: string;
 }): Promise<ManagerApprovalResult> {
   if (
     hasPermission(
@@ -23,27 +32,35 @@ export async function resolveManagerApproval(input: {
     return { ok: true, approvedByUserId: input.userId };
   }
 
-  const pin = input.managerPin?.trim();
-  if (!pin) {
+  if (!input.managerUserId || !input.managerPin) {
     return { ok: false, code: "MANAGER_PIN_REQUIRED" };
   }
-
-  const pinHash = hashPin(pin);
-  const candidates = await prisma.user.findMany({
-    where: { pin: pinHash, isActive: true },
-    select: { id: true },
+  const result = await verifyUserPin({
+    userId: input.managerUserId,
+    pin: input.managerPin,
+    clientIp: input.clientIp,
+    actorUserId: input.userId,
   });
-
-  for (const candidate of candidates) {
-    const allowed = await checkPermission(
-      candidate.id,
+  if (result.status === "throttled") {
+    return {
+      ok: false,
+      code: "MANAGER_PIN_THROTTLED",
+      retryAfterSeconds: result.retryAfterSeconds,
+    };
+  }
+  if (result.status === "security-unavailable") {
+    return { ok: false, code: "PIN_SECURITY_UNAVAILABLE" };
+  }
+  if (
+    result.status !== "verified" ||
+    result.user.mustChangePassword ||
+    !hasPermission(
+      result.user.permissions,
       input.permissionName,
       input.minimumLevel,
-    );
-    if (allowed) {
-      return { ok: true, approvedByUserId: candidate.id };
-    }
+    )
+  ) {
+    return { ok: false, code: "INVALID_MANAGER_PIN" };
   }
-
-  return { ok: false, code: "INVALID_MANAGER_PIN" };
+  return { ok: true, approvedByUserId: result.user.id };
 }

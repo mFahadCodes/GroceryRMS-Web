@@ -1,8 +1,7 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { authConfig } from "@/lib/auth.config";
-import { hashPin } from "@/lib/pin";
 import { loadPermissionTokensForRole } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -10,6 +9,7 @@ import { resolveClientIp } from "@/lib/client-ip";
 import { SESSION_REVOCATION_REASONS } from "@/lib/security/auth-constants";
 import { createAuthoritativeLoginSession } from "@/lib/security/login-session";
 import { revokeCurrentSession } from "@/lib/security/session-invalidation";
+import { verifyUserPin } from "@/lib/services/pin-security-service";
 
 type LoginType = "password" | "pin";
 
@@ -31,12 +31,12 @@ async function authenticateWithPassword(username: string, password: string) {
   return user;
 }
 
-async function authenticateWithPin(pin: string) {
-  const pinHash = hashPin(pin);
-  return prisma.user.findFirst({
-    where: { pin: pinHash, isActive: true },
-    include: { role: true },
-  });
+export class PinThrottledCredentialsError extends CredentialsSignin {
+  code = "pin_throttled";
+}
+
+export class PinSecurityUnavailableCredentialsError extends CredentialsSignin {
+  code = "pin_security_unavailable";
 }
 
 export async function recordLogin(
@@ -62,6 +62,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" },
         pin: { label: "PIN", type: "text" },
+        userId: { label: "User ID", type: "text" },
         loginType: { label: "Login Type", type: "text" },
       },
       async authorize(credentials, request) {
@@ -70,29 +71,50 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             ? (credentials.loginType as LoginType)
             : undefined;
 
-        let user = null;
+        let user:
+          | {
+              id: number;
+              fullName: string;
+              email?: string | null;
+              roleId: number;
+              authVersion: number;
+              mustChangePassword: boolean;
+              permissions?: string[];
+            }
+          | null = null;
 
         if (loginType === "pin") {
-          const pin =
-            typeof credentials?.pin === "string" ? credentials.pin.trim() : "";
-          const username =
-            typeof credentials?.username === "string"
-              ? credentials.username.trim()
-              : "";
-          if (!pin) {
+          const pin = typeof credentials?.pin === "string" ? credentials.pin : "";
+          const userId = Number(credentials?.userId);
+          if (!pin || !Number.isSafeInteger(userId) || userId <= 0) {
             return null;
           }
-          if (username) {
-            const account = await prisma.user.findFirst({
-              where: { username, isActive: true },
-            });
-            if (!account || !account.pin) {
-              return null;
-            }
-            user = account.pin === hashPin(pin) ? account : null;
-          } else {
-            user = await authenticateWithPin(pin);
+          const verification = await verifyUserPin({
+            userId,
+            pin,
+            clientIp: request ? resolveClientIp(request) : "unknown",
+          });
+          if (verification.status === "throttled") {
+            throw new PinThrottledCredentialsError();
           }
+          if (verification.status === "security-unavailable") {
+            throw new PinSecurityUnavailableCredentialsError();
+          }
+          if (verification.status !== "verified") return null;
+          const current = await prisma.user.findFirst({
+            where: { id: verification.user.id, isActive: true },
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              roleId: true,
+              authVersion: true,
+              mustChangePassword: true,
+            },
+          });
+          user = current
+            ? { ...current, permissions: verification.user.permissions }
+            : null;
         } else {
           const username =
             typeof credentials?.username === "string"
@@ -112,7 +134,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        const permissions = await loadPermissionTokensForRole(user.roleId);
+        const permissions =
+          user.permissions ?? (await loadPermissionTokensForRole(user.roleId));
         const ipAddress = request ? resolveClientIp(request) : "unknown";
         const dbSession = await recordLogin(
           user.id,

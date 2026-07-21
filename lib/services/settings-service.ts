@@ -1,11 +1,30 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { hashPin } from "@/lib/pin";
 import { SESSION_REVOCATION_REASONS } from "@/lib/security/auth-constants";
 import {
   invalidateUserAuthentication,
   invalidateUsersForRoleChange,
 } from "@/lib/security/session-invalidation";
+import { createSecurePinHash } from "@/lib/services/pin-security-service";
+import { validatePinCreationPolicy } from "@/lib/security/pin-hash";
+import { ServiceError } from "@/lib/api/service-error";
+import { PinSecurityConfigurationError } from "@/lib/security/pin-security-config";
+
+const safeManagedUserSelect = {
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  isActive: true,
+  username: true,
+  fullName: true,
+  roleId: true,
+  phone: true,
+  email: true,
+  lastLoginAt: true,
+  mustChangePassword: true,
+  passwordChangedAt: true,
+  role: { select: { id: true, name: true } },
+} as const;
 
 export async function getAllSettingsGrouped() {
   const rows = await prisma.appSetting.findMany({
@@ -183,7 +202,7 @@ export async function getUserById(id: number) {
 export async function listUsers() {
   return prisma.user.findMany({
     where: { isActive: true },
-    include: { role: true },
+    select: safeManagedUserSelect,
     orderBy: { username: "asc" },
   });
 }
@@ -195,17 +214,42 @@ export async function createUser(input: {
   roleId: number;
   phone?: string | null;
   email?: string | null;
-}) {
-  return prisma.user.create({
-    data: {
+}, securityContext?: { actorUserId: number }, client: typeof prisma = prisma) {
+  const passwordHash = await bcrypt.hash(input.password, 12);
+  if (input.pin) assertPinCreationAllowed(input.pin);
+  return client.$transaction(async (transaction) => {
+    const created = await transaction.user.create({
+      data: {
       username: input.username,
       fullName: input.fullName,
-      passwordHash: await bcrypt.hash(input.password, 12),
-      pin: input.pin ? hashPin(input.pin) : null,
+      passwordHash,
+      pin: null,
       roleId: input.roleId,
       phone: input.phone ?? null,
       email: input.email ?? null,
-    },
+      },
+      select: { id: true },
+    });
+    if (input.pin) {
+      const pinHash = await securePinHashOrThrow(created.id, input.pin);
+      await transaction.user.update({
+        where: { id: created.id },
+        data: { pin: pinHash },
+      });
+      await transaction.auditLog.create({
+        data: {
+          userId: securityContext?.actorUserId ?? null,
+          action: "PIN_CHANGED",
+          tableName: "users",
+          recordId: created.id,
+          newValues: JSON.stringify({ reason: "administrator-assigned" }),
+        },
+      });
+    }
+    return transaction.user.findUniqueOrThrow({
+      where: { id: created.id },
+      select: safeManagedUserSelect,
+    });
   });
 }
 export async function updateUser(id: number, input: {
@@ -217,13 +261,18 @@ export async function updateUser(id: number, input: {
   phone?: string | null;
   email?: string | null;
   isActive?: boolean;
-}) {
+}, securityContext?: { actorUserId: number }, client: typeof prisma = prisma) {
   const passwordHash =
     input.password !== undefined
       ? await bcrypt.hash(input.password, 12)
       : undefined;
+  if (input.pin) assertPinCreationAllowed(input.pin);
   const pinHash =
-    input.pin !== undefined ? (input.pin ? hashPin(input.pin) : null) : undefined;
+    input.pin !== undefined
+      ? input.pin
+        ? await securePinHashOrThrow(id, input.pin)
+        : null
+      : undefined;
   const data = {
     ...(input.username !== undefined ? { username: input.username } : {}),
     ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
@@ -244,16 +293,36 @@ export async function updateUser(id: number, input: {
           : null;
 
   if (!revocationReason) {
-    return prisma.user.update({ where: { id }, data });
+    return client.user.update({
+      where: { id },
+      data,
+      select: safeManagedUserSelect,
+    });
   }
 
-  return prisma.$transaction(async (transaction) => {
+  return client.$transaction(async (transaction) => {
     await transaction.user.update({ where: { id }, data });
     await invalidateUserAuthentication(transaction, {
       userId: id,
       reason: revocationReason,
     });
-    return transaction.user.findUniqueOrThrow({ where: { id } });
+    if (input.pin !== undefined) {
+      await transaction.auditLog.create({
+        data: {
+          userId: securityContext?.actorUserId ?? null,
+          action: "PIN_CHANGED",
+          tableName: "users",
+          recordId: id,
+          newValues: JSON.stringify({
+            reason: input.pin ? "administrator-changed" : "administrator-removed",
+          }),
+        },
+      });
+    }
+    return transaction.user.findUniqueOrThrow({
+      where: { id },
+      select: safeManagedUserSelect,
+    });
   });
 }
 export async function deleteUser(id: number) {
@@ -266,8 +335,33 @@ export async function deleteUser(id: number) {
       userId: id,
       reason: SESSION_REVOCATION_REASONS.ACCOUNT_STATUS_CHANGE,
     });
-    return transaction.user.findUniqueOrThrow({ where: { id } });
+    return transaction.user.findUniqueOrThrow({
+      where: { id },
+      select: safeManagedUserSelect,
+    });
   });
+}
+
+function assertPinCreationAllowed(pin: string) {
+  const result = validatePinCreationPolicy(pin);
+  if (!result.ok) {
+    throw new ServiceError(result.message, result.code, 400);
+  }
+}
+
+async function securePinHashOrThrow(userId: number, pin: string) {
+  try {
+    return await createSecurePinHash(userId, pin);
+  } catch (error) {
+    if (error instanceof PinSecurityConfigurationError) {
+      throw new ServiceError(
+        "PIN security is unavailable",
+        error.code,
+        503,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function replaceRolePermissions(

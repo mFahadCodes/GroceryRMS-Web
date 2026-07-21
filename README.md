@@ -27,6 +27,12 @@ npm run dev
 
 Local database file: `dev.db` (SQLite, no Docker required).
 
+PIN operations additionally require a deployment-only `PIN_PEPPER` with at
+least 32 bytes of entropy. Generate and inject it through the deployment secret
+manager; do not reuse `AUTH_SECRET`, commit it, or configure a fallback. See
+`docs/security/pin-security.md` for the backend contract and required future
+frontend request changes.
+
 ## Secure administrator bootstrap
 
 Administrator bootstrap is environment-driven and runs only when the database has no user assigned to the authoritative `admin` role.
@@ -42,7 +48,7 @@ Administrator bootstrap is environment-driven and runs only when the database ha
 9. Re-running the seed preserves every existing administrator account and its username, password hash, PIN hash, role assignment, identity, and active state.
 10. If the requested username already belongs to a non-administrator, bootstrap fails instead of promoting or overwriting that account.
 
-When an administrator already exists, bootstrap variables are ignored and are not required. Mandatory first-login password rotation is deferred to a later backend security phase.
+When an administrator already exists, bootstrap variables are ignored and are not required. Newly bootstrapped administrators are marked for mandatory password rotation.
 
 The smoke and credential-verification scripts require explicit `SMOKE_ADMIN_USERNAME` and `SMOKE_ADMIN_PASSWORD` environment values. `SMOKE_ADMIN_PIN` is optional for `npm run verify:auth`. These scripts do not fall back to bootstrap values or tracked credentials.
 

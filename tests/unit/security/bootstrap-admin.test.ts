@@ -32,7 +32,7 @@ function createHarness(
   const state = { users: structuredClone(users) };
   const createInputs: BootstrapAdministratorCreateInput[] = [];
   const hashPassword = vi.fn(async () => "test-password-hash");
-  const hashPin = vi.fn(() => "test-pin-hash");
+  const hashPin = vi.fn(async () => "test-pin-hash");
   const transactionSpy = vi.fn();
   const transaction: BootstrapAdministratorDependencies["transaction"] = async (
     operation,
@@ -61,6 +61,10 @@ function createHarness(
         };
         state.users.push(user);
         return { id: user.id };
+      },
+      updateAdministratorPin: async (userId, pinHash) => {
+        const user = state.users.find((candidate) => candidate.id === userId);
+        if (user) user.pin = pinHash;
       },
     });
   };
@@ -159,7 +163,7 @@ describe("first administrator bootstrap", () => {
       roleId: ADMIN_ROLE_ID,
       isActive: true,
       passwordHash: "test-password-hash",
-      pinHash: "test-pin-hash",
+      pinHash: null,
       mustChangePassword: true,
       passwordChangedAt: null,
     });
@@ -193,8 +197,9 @@ describe("first administrator bootstrap", () => {
 
     await bootstrapAdministrator(harness.dependencies);
 
-    expect(harness.hashPin).toHaveBeenCalledWith("4826");
-    expect(harness.createInputs[0].pinHash).toBe("test-pin-hash");
+    expect(harness.hashPin).toHaveBeenCalledWith(1, "4826");
+    expect(harness.createInputs[0].pinHash).toBeNull();
+    expect(harness.state.users[0].pin).toBe("test-pin-hash");
   });
 
   it("stores no PIN hash when the optional PIN is omitted", async () => {

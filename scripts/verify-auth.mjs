@@ -1,6 +1,5 @@
 import { config } from "dotenv";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
@@ -32,6 +31,7 @@ if (!databaseUrl) {
 const prisma = new PrismaClient({
   adapter: new PrismaBetterSqlite3({ url: databaseUrl }),
 });
+const { verifyUserPin } = await import("../lib/services/pin-security-service.ts");
 
 try {
   const user = await prisma.user.findFirst({
@@ -43,10 +43,18 @@ try {
     process.exitCode = 1;
   } else {
     const passwordOk = await bcrypt.compare(password, user.passwordHash);
-    const pinOk =
+    const pinResult =
       pin === undefined
         ? null
-        : user.pin === createHash("sha256").update(pin).digest("hex");
+        : await verifyUserPin(
+            {
+              userId: user.id,
+              pin,
+              clientIp: "credential-verification-script",
+            },
+            prisma,
+          );
+    const pinOk = pinResult === null ? null : pinResult.status === "verified";
 
     console.log("SQLite connection: OK");
     console.log("User lookup: OK");

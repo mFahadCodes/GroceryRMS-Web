@@ -56,22 +56,22 @@ export const createUserSchema = z.object({
   username: z.string().min(1),
   fullName: z.string().min(1),
   password: z.string().min(1),
-  pin: z.string().optional().nullable(),
+  pin: z.string().regex(/^[0-9]{4}$/).optional().nullable(),
   roleId: z.number().int().positive(),
   phone: z.string().optional().nullable(),
   email: z.string().email().optional().nullable(),
-});
+}).strict();
 
 export const updateUserSchema = z.object({
   username: z.string().min(1).optional(),
   fullName: z.string().min(1).optional(),
   password: z.string().min(1).optional(),
-  pin: z.string().optional().nullable(),
+  pin: z.string().regex(/^[0-9]{4}$/).optional().nullable(),
   roleId: z.number().int().positive().optional(),
   phone: z.string().optional().nullable(),
   email: z.string().email().optional().nullable(),
   isActive: z.boolean().optional(),
-});
+}).strict();
 
 export const createRoleSchema = z.object({
   name: z.string().min(1),

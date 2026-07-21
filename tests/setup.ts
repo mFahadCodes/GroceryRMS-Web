@@ -6,6 +6,8 @@ const defaultTestDatabaseUrl = "file:./.tmp/groceryrms-test.db";
 const databaseUrl = process.env.DATABASE_URL ?? defaultTestDatabaseUrl;
 
 Object.assign(process.env, { NODE_ENV: "test" });
+process.env.PIN_PEPPER ??=
+  "test-only-pin-pepper-for-groceryrms-security-tests-2026";
 
 if (!databaseUrl.startsWith("file:")) {
   throw new Error("Tests require a disposable SQLite file under .tmp");

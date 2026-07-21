@@ -1,4 +1,5 @@
 import { validatePasswordPolicy } from "../../lib/security/password-policy";
+import { validatePinCreationPolicy } from "../../lib/security/pin-hash";
 
 const MAXIMUM_USERNAME_CHARACTERS = 64;
 const PIN_LENGTH = 4;
@@ -94,32 +95,29 @@ export function validateBootstrapPin(
     return { ok: true, value: null };
   }
 
-  if (!new RegExp(`^\\d{${PIN_LENGTH}}$`).test(pin)) {
+  const result = validatePinCreationPolicy(pin);
+  if (!result.ok && result.code === "PIN_INVALID_FORMAT") {
     return failure(
       "BOOTSTRAP_ADMIN_PIN_INVALID_FORMAT",
       `BOOTSTRAP_ADMIN_PIN must contain exactly ${PIN_LENGTH} digits.`,
     );
   }
 
-  if (/^(\d)\1+$/.test(pin)) {
+  if (!result.ok && result.code === "PIN_REPEATED_DIGITS") {
     return failure(
       "BOOTSTRAP_ADMIN_PIN_REPEATED_DIGITS",
       "BOOTSTRAP_ADMIN_PIN must not repeat the same digit.",
     );
   }
 
-  if (isSequentialPin(pin)) {
+  if (!result.ok && result.code === "PIN_SEQUENTIAL") {
     return failure(
       "BOOTSTRAP_ADMIN_PIN_SEQUENTIAL",
       "BOOTSTRAP_ADMIN_PIN must not be an ascending or descending sequence.",
     );
   }
 
-  return { ok: true, value: pin };
-}
-
-function isSequentialPin(pin: string): boolean {
-  return "01234567890".includes(pin) || "98765432109".includes(pin);
+  return result.ok ? result : { ok: true, value: pin };
 }
 
 function failure<T>(
