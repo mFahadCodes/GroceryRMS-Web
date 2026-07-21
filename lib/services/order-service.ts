@@ -4,7 +4,10 @@ import type { CustomerTier, OrderStatus, OrderType } from "@prisma/client";
 import { ServiceError } from "@/lib/api/service-error";
 import { createOrderWithUniqueNumber } from "@/lib/order-number";
 import { calculatePaisaTotals } from "@/lib/paisa-math";
-import { checkPermission } from "@/lib/permissions";
+import {
+  consumeManagerApprovalGrant,
+  type ManagerApprovalRequester,
+} from "@/lib/services/manager-approval-service";
 import { PERMS } from "@/lib/api/permissions";
 import {
   createSaleDrawerLog,
@@ -201,10 +204,19 @@ export async function addItemToOrder(input: {
 export async function voidOrder(input: {
   orderId: number;
   reason: string;
-  approvedByUserId?: number;
   reverseStock?: boolean;
-}) {
+} & ManagerApprovalInput) {
   return prisma.$transaction(async (tx) => {
+    const approval =
+      input.approvalToken !== undefined && input.requester !== undefined
+        ? await consumeManagerApprovalGrant(tx, {
+            requester: input.requester,
+            approvalToken: input.approvalToken,
+            action: "order.void",
+            resourceType: "order",
+            resourceId: input.orderId,
+          })
+        : { approverUserId: input.approvedByUserId ?? null };
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
       include: { orderItems: true, payments: true },
@@ -234,7 +246,7 @@ export async function voidOrder(input: {
             costAmount: item.unitPrice,
             reference: order.orderNumber,
             notes: `Stock reversal for void (${order.orderNumber})`,
-            userId: input.approvedByUserId ?? null,
+            userId: approval.approverUserId,
           },
         });
       }
@@ -245,10 +257,26 @@ export async function voidOrder(input: {
       data: {
         status: "Void",
         voidReason: input.reason,
-        approvedByUserId: input.approvedByUserId ?? null,
+        approvedByUserId: approval.approverUserId,
       },
       include: orderInclude,
     });
+
+    if (input.approvalToken !== undefined && input.requester !== undefined) {
+      await tx.auditLog.create({
+        data: {
+          userId: input.requester.userId,
+          action: "VOID_ORDER",
+          tableName: "orders",
+          recordId: input.orderId,
+          newValues: serializeAuditValues({
+            reason: input.reason,
+            approvedByUserId: approval.approverUserId,
+          }),
+          ipAddress: input.auditIpAddress ?? null,
+        },
+      });
+    }
 
     return updated;
   });
@@ -310,60 +338,116 @@ export async function applyOrderDiscount(input: {
   orderId: number;
   discountAmount?: bigint;
   discountPercent?: number;
-  approvedByUserId?: number;
-}) {
-  const order = await prisma.order.findUnique({
-    where: { id: input.orderId },
-    include: {
-      orderItems: {
-        where: { status: { not: "Void" } },
-        include: { product: { select: { maxDiscount: true } } },
-      },
-    },
-  });
-  if (!order) throw new ServiceError("Order not found");
-
-  if (input.approvedByUserId) {
-    const allowed = await checkPermission(
-      input.approvedByUserId,
-      PERMS.APPLY_DISCOUNTS,
-      4,
-    );
-    if (!allowed) {
-      throw new ServiceError("Approver does not have discount permission");
+  reason?: string | null;
+} & ManagerApprovalInput) {
+  return prisma.$transaction(async (tx) => {
+    let approval: { approverUserId: number | null };
+    if (input.approvalToken !== undefined && input.requester !== undefined) {
+      approval = await consumeManagerApprovalGrant(tx, {
+        requester: input.requester,
+        approvalToken: input.approvalToken,
+        action: "order.discount",
+        resourceType: "order",
+        resourceId: input.orderId,
+      });
+    } else {
+      if (
+        input.approvedByUserId &&
+        !(await hasPermissionInTransaction(
+          tx,
+          input.approvedByUserId,
+          PERMS.APPLY_DISCOUNTS,
+          4,
+        ))
+      ) {
+        throw new ServiceError(
+          "Approver does not have discount permission",
+        );
+      }
+      approval = { approverUserId: input.approvedByUserId ?? null };
     }
-  }
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: {
+        orderItems: {
+          where: { status: { not: "Void" } },
+          include: { product: { select: { maxDiscount: true } } },
+        },
+      },
+    });
+    if (!order) throw new ServiceError("Order not found");
 
-  const subTotal = order.orderItems.reduce((sum, item) => sum + item.lineTotal, 0n);
-  let discountAmount =
-    input.discountAmount ??
-    (input.discountPercent !== undefined
-      ? (subTotal * BigInt(Math.round(input.discountPercent * 100))) / 10000n
-      : order.discountAmount);
+    const subTotal = order.orderItems.reduce(
+      (sum, item) => sum + item.lineTotal,
+      0n,
+    );
+    let discountAmount =
+      input.discountAmount ??
+      (input.discountPercent !== undefined
+        ? (subTotal * BigInt(Math.round(input.discountPercent * 100))) / 10000n
+        : order.discountAmount);
 
-  discountAmount = capOrderDiscountAmount(order.orderItems, subTotal, discountAmount);
+    discountAmount = capOrderDiscountAmount(
+      order.orderItems,
+      subTotal,
+      discountAmount,
+    );
 
-  const tax = await resolveTaxRate(order.taxRateId);
-  const totals = calculatePaisaTotals({
-    subTotal,
-    discountAmount,
-    taxPercent: tax.taxPercent,
-    isInclusive: tax.isInclusive,
-    serviceChargeAmount: order.serviceCharge,
-    adjustment: order.adjustment,
-  });
+    const tax = await resolveTaxRate(order.taxRateId, tx);
+    const totals = calculatePaisaTotals({
+      subTotal,
+      discountAmount,
+      taxPercent: tax.taxPercent,
+      isInclusive: tax.isInclusive,
+      serviceChargeAmount: order.serviceCharge,
+      adjustment: order.adjustment,
+    });
 
-  return prisma.order.update({
-    where: { id: input.orderId },
-    data: {
-      discountAmount: totals.discountAmount,
-      taxAmount: totals.taxAmount,
-      grandTotal: totals.grandTotal,
-      approvedByUserId: input.approvedByUserId ?? order.approvedByUserId,
-    },
-    include: orderInclude,
+    const updated = await tx.order.update({
+      where: { id: input.orderId },
+      data: {
+        discountAmount: totals.discountAmount,
+        taxAmount: totals.taxAmount,
+        grandTotal: totals.grandTotal,
+        approvedByUserId:
+          approval.approverUserId ?? order.approvedByUserId,
+      },
+      include: orderInclude,
+    });
+    if (input.approvalToken !== undefined && input.requester !== undefined) {
+      await tx.auditLog.create({
+        data: {
+          userId: input.requester.userId,
+          action: "APPLY_ORDER_DISCOUNT",
+          tableName: "orders",
+          recordId: input.orderId,
+          newValues: serializeAuditValues({
+            discountAmount: input.discountAmount,
+            discountPercent: input.discountPercent,
+            reason: input.reason,
+            approvedByUserId: approval.approverUserId,
+          }),
+          ipAddress: input.auditIpAddress ?? null,
+        },
+      });
+    }
+    return updated;
   });
 }
+
+type ManagerApprovalInput =
+  | {
+      approvalToken: string;
+      requester: ManagerApprovalRequester;
+      auditIpAddress?: string | null;
+      approvedByUserId?: never;
+    }
+  | {
+      approvedByUserId?: number;
+      approvalToken?: never;
+      requester?: never;
+      auditIpAddress?: never;
+    };
 
 export async function buildReceiptData(orderId: number) {
   const order = await getOrderById(orderId);
@@ -645,8 +729,12 @@ export async function getOrdersByDate(start: Date, end: Date) {
   });
 }
 
-async function resolveDefaultTaxRateId(): Promise<number | null> {
-  const setting = await prisma.appSetting.findUnique({
+type TaxRateStore = Pick<Prisma.TransactionClient, "appSetting" | "taxRate">;
+
+async function resolveDefaultTaxRateId(
+  store: TaxRateStore = prisma,
+): Promise<number | null> {
+  const setting = await store.appSetting.findUnique({
     where: { key: "DefaultTaxRateId" },
   });
   if (!setting?.value) return null;
@@ -654,10 +742,13 @@ async function resolveDefaultTaxRateId(): Promise<number | null> {
   return Number.isFinite(id) ? id : null;
 }
 
-async function resolveTaxRate(taxRateId: number | null | undefined) {
-  const id = taxRateId ?? (await resolveDefaultTaxRateId());
+async function resolveTaxRate(
+  taxRateId: number | null | undefined,
+  store: TaxRateStore = prisma,
+) {
+  const id = taxRateId ?? (await resolveDefaultTaxRateId(store));
   if (!id) return { taxPercent: 0, isInclusive: false };
-  const taxRate = await prisma.taxRate.findFirst({
+  const taxRate = await store.taxRate.findFirst({
     where: { id, isActive: true },
   });
   if (!taxRate) return { taxPercent: 0, isInclusive: false };
@@ -665,6 +756,37 @@ async function resolveTaxRate(taxRateId: number | null | undefined) {
     taxPercent: Number(taxRate.rate),
     isInclusive: taxRate.isInclusive,
   };
+}
+
+function serializeAuditValues(value: unknown): string {
+  return JSON.stringify(value, (_key, nested) =>
+    typeof nested === "bigint" ? nested.toString() : nested,
+  );
+}
+
+async function hasPermissionInTransaction(
+  transaction: Prisma.TransactionClient,
+  userId: number,
+  permissionName: string,
+  minimumLevel: number,
+) {
+  const user = await transaction.user.findUnique({
+    where: { id: userId },
+    select: {
+      role: {
+        select: {
+          rolePermissions: {
+            where: {
+              permission: { name: permissionName, isActive: true },
+            },
+            select: { accessLevel: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+  return (user?.role.rolePermissions[0]?.accessLevel ?? 0) >= minimumLevel;
 }
 
 export async function applyOrderTax(orderId: number, taxRateId: number) {

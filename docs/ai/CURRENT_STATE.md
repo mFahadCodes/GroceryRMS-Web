@@ -4,19 +4,34 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
 
 ## Baseline
 
-- Current `main` hash: `a6d737918ce74b8bcecb6e3eaeea0b569a0adc05`
-  (merge of PR #5, SEC-02A PIN hardening)
+- Current `main` hash: `0b45c3081a50d0904961e8d50dd6ad5697b466e1`
+  (merge of PR #6, chore/cursor-workspace-migration)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
-## Verified counts (at the hash above)
+## In-flight (not merged)
 
-- Prisma migration head: `20260722_000000_add_pin_security_state`
+- **SEC-02B** — Terminal/session-bound manager approval grants. Implemented and
+  verified on branch `fix/sec-02b-manager-approval-grants` (base `main`
+  `0b45c3081a50d0904961e8d50dd6ad5697b466e1`); not merged. Adds
+  `POST /api/auth/manager-approvals` (one-time raw token, SHA-256 digest stored, 120s
+  TTL, action/order/requester/terminal-bound single-use grants) and transactional grant
+  consumption inside the discount/void order paths. Discovered a SEC-04 `updateMeta`
+  self-approval bypass in `PUT /api/orders/{id}` (deferred to SEC-04). See
+  `docs/security/manager-approval-grants.md`.
+
+## Verified counts
+
+- Prisma migration head (main): `20260722_000000_add_pin_security_state`
   (history: `20260720_000000_baseline` → `20260720_010000_authoritative_sessions`
   → `20260721_000000_add_password_rotation_state` → `20260722_000000_add_pin_security_state`)
 - Test files: **32** (all passing)
 - Tests: **316** (all passing, zero skipped, no `.only`)
+- On branch `fix/sec-02b-manager-approval-grants`: adds migration
+  `20260723_000000_add_manager_approval_grants` (manager_approval_grants table).
+  Verified branch totals: **42 test files, 406 tests, all passing, zero skipped**.
+  SEC-02B adds **10 focused files and 90 tests**.
 - CI: GitHub Actions workflow **"Quality Gates"** (`.github/workflows/quality-gates.yml`)
   — npm ci, prisma generate, lint, typecheck, test, build on Node 22
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
@@ -34,12 +49,20 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
 - `POST /api/auth/change-password` and `mustChangePassword` session flag → password-rotation UI and forced redirect.
 - PIN login and `POST /api/auth/validate-pin` now require `{ userId, pin }` → explicit user selection UI (anonymous quick-login payloads no longer work).
 - Manager approvals require `{ managerUserId, managerPin }` → explicit manager selection UI.
-- SEC-02B (future) will add terminal/session-bound approval grants and their UX.
+- SEC-02B (branch, not merged) adds `POST /api/auth/manager-approvals` returning a
+  one-time approval token that must be attached as `managerApprovalToken` to the
+  discount/void calls → explicit manager step-up UI plus one-time token handling
+  (`docs/security/manager-approval-grants.md`).
 
 ## Current limitations
 
 - Frontend is incomplete and behind the backend contracts above.
-- SEC-02B, SEC-04, SEC-05 and the P0 business-integrity items are not implemented (see `SECURITY_ROADMAP.md`).
+- SEC-02B is implemented and verified on `fix/sec-02b-manager-approval-grants` but not
+  merged; SEC-04, SEC-05 and the P0 business-integrity items are not implemented (see
+  `SECURITY_ROADMAP.md`).
+- A SEC-04 authorization bypass is confirmed: `PUT /api/orders/{id}` `updateMeta`
+  self-approves discounts/voids and sets discount/adjustment directly, sidestepping the
+  manager approval grant. Deferred to SEC-04.
 - SQLite only; PostgreSQL production migration and deployment hardening are deferred.
 - Terminal-level PIN throttling is deliberately skipped until a trustworthy terminal binding exists (IP throttling is mandatory).
 

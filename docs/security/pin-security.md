@@ -24,12 +24,12 @@ Expired bucket cleanup is opportunistic and bounded. A successful PIN does not c
 
 ## Manager verification and PIN administration
 
-Discount and void approval inputs now require `managerUserId` together with `managerPin` when the acting user lacks the required access level. Only that user is verified, and the user's current active role and permission are checked after PIN verification. Password-rotation-required users cannot approve. No approval token or reusable grant is issued.
+Manager approval issuance requires `managerUserId` together with `managerPin` at `POST /api/auth/manager-approvals`. Only that explicit user is verified through this SEC-02A service; password-rotation-required users cannot approve. SEC-02B then issues a short-lived, one-time, session/action/order-bound grant whose raw token is returned once to the requester. Discount and void routes accept only that grant token and never receive a manager PIN. See [`manager-approval-grants.md`](manager-approval-grants.md).
 
 Administrative PIN assignment and changes use v2 hashing, increment `authVersion`, and revoke active sessions transactionally. The permission-protected `POST /api/settings/users/{id}/pin-lockout/reset` endpoint clears only user-specific PIN failure fields. It does not change the PIN, reactivate the user, reset authentication version, or clear aggregate buckets.
 
 Security audit events contain only actor/target identifiers and safe reason codes. PINs, hashes, HMAC values, peppers, throttle keys, JWTs, session identifiers, authorization headers, and request bodies are excluded.
 
-## Deferred frontend and SEC-02B work
+## Deferred frontend work
 
-The existing frontend still submits anonymous quick-login and manager-PIN payloads and must be updated later to select an explicit user/manager. SEC-02B remains responsible for terminal-bound step-up sessions, action- or order-bound approval grants, replay prevention, and sensitive-operation consumption of those grants. SEC-02A does not implement PIN recovery, history, uniqueness, expiry, or employee-switching UX.
+The existing frontend still submits anonymous quick-login and manager-PIN payloads and must be updated later to select an explicit user/manager, request an SEC-02B grant, hold its raw token in memory only, and submit it once to the exact sensitive operation. Trustworthy terminal enrollment/binding remains deferred; request-body terminal IDs are never authoritative. SEC-02A does not implement PIN recovery, history, uniqueness, expiry, or employee-switching UX.
