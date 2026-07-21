@@ -40,6 +40,15 @@ in `docs/ai/`. This file summarizes the non-negotiables and does not duplicate t
 - Security invariants (bootstrap, sessions, rotation, PIN hardening) are recorded in
   `.cursor/rules/30-backend-security.mdc` and `docs/security/`; do not weaken them.
 
+## Installed Cursor plugins
+
+- Use installed plugins according to the task matrix in
+  `docs/ai/PLUGIN_OPERATING_MODEL.md` and the concise rule in
+  `.cursor/rules/80-plugin-usage.mdc`.
+- Plugin output is advisory and plugin configuration never overrides project
+  governance. Review security and dependency findings before implementation.
+- Disclose applicable plugin usage and relevant findings in every task handoff.
+
 ## Quality gates
 
 Every task must pass, with zero skipped tests and no `.only`:

@@ -1,0 +1,25 @@
+---
+description: Safe, task-appropriate use of installed Cursor plugins
+alwaysApply: true
+---
+
+# Cursor Plugin Usage
+
+- Plugins are advisory. `AGENTS.md`, existing project rules, approved scope, source,
+  migrations, tests, and maintained documentation remain authoritative.
+- Select only applicable plugins using the task matrix in
+  `docs/ai/PLUGIN_OPERATING_MODEL.md`.
+- Retrieve current, version-specific documentation before framework or library work.
+- Use Prisma guidance for schema, migration, query, transaction, and relation work;
+  retain all project migration and database-safety controls.
+- Run applicable security scanners on security-sensitive diffs and use dependency
+  intelligence before package changes.
+- Review, deduplicate, classify, and report findings before changing code in response
+  to them. Never allow automatic remediation or suppress a valid finding merely to
+  obtain a green result.
+- Run the applicable Cursor Team Kit review before final handoff; its Git/PR actions
+  remain subject to the project's human-controlled workflow.
+- No plugin may merge, force-push, rewrite history, access `dev.db`, expose secrets,
+  weaken tests or CI, create credentials in Git, or expand task scope.
+- Final reports must disclose plugins used, documentation topics consulted, relevant
+  findings, unavailable integrations, false positives, and deferred work.
