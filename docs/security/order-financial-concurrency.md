@@ -121,7 +121,14 @@ unchanged. No frontend changes. No schema or dependency changes.
 
 ## Deferred
 
-- Refund / return / void / discount concurrency and idempotency
+- Void / discount concurrency and idempotency
+- Physical historical return-lineage reconciliation tooling
+- General order locking beyond protected checkout/payment/refund/return paths
+- Redis / queues / distributed locks
+- PostgreSQL production locking verification
+
+Refund/return different-key concurrency and idempotency are covered by P0-C1
+(`docs/security/refund-return-idempotency.md`).
 - General order versioning or distributed locks
 - Redis / queues
 - Broader optimistic locking across the application

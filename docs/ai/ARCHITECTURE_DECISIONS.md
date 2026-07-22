@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`11b1a918…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`e9507bb…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -59,24 +59,31 @@ branch are collected under "In-flight decisions" and are not yet binding on main
   uses `session.authoritative.terminalId` or sentinel `t:none`. Seven-day
   replay window; physical cleanup deferred. See
   `docs/security/checkout-payment-idempotency.md`.
+- **Order row is the different-key concurrency boundary for checkout and
+  partial payment (P0-B).** Conditional `updateMany` on `Order.status` plus
+  in-transaction payment-sum remaining checks. Losing different-key requests
+  create no payment, stock effect, success audit, or completed idempotency
+  record. See `docs/security/order-financial-concurrency.md`.
 
 ## Money
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `fix/p0b-order-financial-concurrency`, not merged)
+## In-flight decisions (branch `fix/p0c1-refund-return-idempotency`, not merged)
 
-These are implemented and verified on the P0-B branch (base `main` `11b1a918…`)
+These are implemented and verified on the P0-C1 branch (base `main` `e9507bb…`)
 and become binding only once merged. See
-`docs/security/order-financial-concurrency.md`.
+`docs/security/refund-return-idempotency.md`.
 
-- **Order row is the different-key concurrency boundary** for checkout and
-  partial payment. Conditional `updateMany` on `Order.status` plus in-transaction
-  payment-sum remaining checks; no new schema columns.
-- **Losing different-key requests** create no payment, stock effect, success
-  audit, or completed idempotency record; they return stable `409` conflicts.
-- **Same-key P0-A replay** remains unchanged. Refund/return/void concurrency is
-  deferred. General order locking is not claimed complete.
+- **Refund and return require `Idempotency-Key`** with operations `order.refund`
+  and `order.return`.
+- **`OrderItem.returnedQuantity` is the authoritative quantity CAS counter**;
+  `sourceOrderItemId` is lineage only (`onDelete: SetNull`).
+- **Legacy null-lineage merchandise return rows** are not backfilled; further
+  merchandise returns on affected orders are blocked until controlled
+  reconciliation.
+- **Monetary remaining** for refund/return-with-refund uses in-transaction
+  child Refund order aggregates. Void idempotency remains deferred (P0-C2).
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.
