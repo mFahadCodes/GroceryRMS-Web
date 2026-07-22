@@ -3,6 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requireSession } from "@/lib/api/rbac";
 import { fail, ok, okFromStoredEnvelope } from "@/lib/api-response";
+import { ServiceError } from "@/lib/api/service-error";
 import { hasPermission } from "@/lib/permissions";
 import { serializeRecord } from "@/lib/api/serialize";
 import { resolveClientIp } from "@/lib/client-ip";
@@ -86,6 +87,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     if (error instanceof IdempotencyConflictError) {
       return fail(error.message, error.code, 409);
+    }
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
     }
     return fail(
       error instanceof Error ? error.message : "Partial payment failed",
