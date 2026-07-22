@@ -3,7 +3,11 @@ import { prisma } from "@/lib/prisma";
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 50;
 
-export async function generateOrderNumber(): Promise<string> {
+type OrderNumberStore = Pick<Prisma.TransactionClient, "order">;
+
+export async function generateOrderNumber(
+  store: OrderNumberStore = prisma,
+): Promise<string> {
   const now = new Date();
   const date = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const utcStart = new Date(date);
@@ -13,12 +17,12 @@ export async function generateOrderNumber(): Promise<string> {
   const day = String(date.getDate()).padStart(2, "0");
   let counter =
     10 +
-    (await prisma.order.count({
+    (await store.order.count({
       where: { createdAt: { gte: utcStart, lt: utcEnd } },
     }));
 
   let candidate = `O-${day}${counter}`;
-  while (await prisma.order.findFirst({ where: { orderNumber: candidate } })) {
+  while (await store.order.findFirst({ where: { orderNumber: candidate } })) {
     counter += 1;
     candidate = `O-${day}${counter}`;
   }
@@ -48,9 +52,10 @@ export function isOrderNumberUniqueViolation(error: unknown): boolean {
 /** Mirrors RPOS collision safety: retry with a fresh sequence on unique violations. */
 export async function createOrderWithUniqueNumber<T>(
   create: (orderNumber: string) => Promise<T>,
+  store: OrderNumberStore = prisma,
 ): Promise<T> {
   for (let attempt = 0; attempt < MAX_ORDER_NUMBER_ATTEMPTS; attempt += 1) {
-    const orderNumber = await generateOrderNumber();
+    const orderNumber = await generateOrderNumber(store);
     try {
       return await create(orderNumber);
     } catch (error) {
