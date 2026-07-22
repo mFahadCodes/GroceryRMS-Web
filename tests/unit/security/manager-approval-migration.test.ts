@@ -83,6 +83,7 @@ describe("SEC-02B manager approval grants migration", () => {
   let fresh: Database.Database | undefined;
   let tablesBefore: string[];
   let productColumnsBefore: string[];
+  let orderItemColumnsBefore: string[];
 
   beforeAll(() => {
     cleanup();
@@ -92,6 +93,7 @@ describe("SEC-02B manager approval grants migration", () => {
     for (const migration of migrations.slice(0, -1)) upgrade.exec(migration);
     tablesBefore = tableNames(upgrade);
     productColumnsBefore = columnNames(upgrade, "products");
+    orderItemColumnsBefore = columnNames(upgrade, "order_items");
     upgrade
       .prepare(
         "INSERT INTO roles (id, updated_at, name) VALUES (1, ?, 'Existing Role')",
@@ -127,9 +129,17 @@ describe("SEC-02B manager approval grants migration", () => {
     expect(tableNames(upgrade!)).toContain("manager_approval_grants");
   });
 
-  it("adds the idempotency table on top of the prior migration head", () => {
-    expect(tableNames(upgrade!)).toEqual(
-      [...tablesBefore, "idempotency_records"].sort(),
+  it("keeps the table set unchanged when applying the latest additive OrderItem migration", () => {
+    expect(tableNames(upgrade!)).toEqual(tablesBefore);
+    expect(tablesBefore).toContain("idempotency_records");
+  });
+
+  it("adds returned_quantity and source_order_item_id on the latest upgrade step", () => {
+    expect(orderItemColumnsBefore).not.toContain("returned_quantity");
+    expect(orderItemColumnsBefore).not.toContain("source_order_item_id");
+    const after = columnNames(upgrade!, "order_items");
+    expect(after).toEqual(
+      expect.arrayContaining(["returned_quantity", "source_order_item_id"]),
     );
   });
 

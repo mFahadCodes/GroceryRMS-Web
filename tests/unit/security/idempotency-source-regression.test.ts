@@ -115,18 +115,22 @@ describe("idempotency source regression: route wiring", () => {
 });
 
 describe("idempotency source regression: operation registry and metadata safety", () => {
-  it("registers exactly order.checkout and order.partial-payment as financial idempotency operations", () => {
+  it("registers checkout, partial-payment, refund, and return as financial idempotency operations", () => {
     expect(FINANCIAL_IDEMPOTENCY_OPERATIONS).toEqual([
       "order.checkout",
       "order.partial-payment",
+      "order.refund",
+      "order.return",
     ]);
   });
 
-  it("idempotency.ts defines no third operation string anywhere in the module", () => {
+  it("idempotency.ts operation literals match the registered financial operations", () => {
     const source = read(IDEMPOTENCY_LIB);
     const operationLiterals = source.match(/"order\.[a-z-]+"/g) ?? [];
     const unique = [...new Set(operationLiterals.map((literal) => literal.slice(1, -1)))];
-    expect(unique.sort()).toEqual(["order.checkout", "order.partial-payment"]);
+    expect(unique.sort()).toEqual(
+      [...FINANCIAL_IDEMPOTENCY_OPERATIONS].sort(),
+    );
   });
 
   it("checkout audit metadata builder never accepts or returns the raw idempotency key", () => {
