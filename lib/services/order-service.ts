@@ -23,6 +23,14 @@ import {
   sumPaymentAmounts,
 } from "@/lib/security/order-financial-concurrency";
 import {
+  acquireClosedOrderWrite,
+  assertNoLegacyNullLineageReturns,
+  assertRefundWithinRemaining,
+  claimSourceReturnQuantities,
+  remainingRefundableAmount,
+  sumCommittedRefundAbsolute,
+} from "@/lib/security/refund-return-concurrency";
+import {
   consumeManagerApprovalGrant,
   type ManagerApprovalRequester,
 } from "@/lib/services/manager-approval-service";
@@ -514,17 +522,23 @@ export async function buildReceiptData(orderId: number) {
   };
 }
 
-export async function refundOrder(input: {
-  orderId: number;
-  reason: string;
-  amount?: bigint;
-  paymentMethodId: number;
-  terminalId: number;
-  cashierId: number;
-  referenceNo?: string | null;
-  auditIpAddress?: string | null;
-}) {
-  return prisma.$transaction(async (tx) => {
+export async function refundOrder(
+  input: {
+    orderId: number;
+    reason: string;
+    amount?: bigint;
+    paymentMethodId: number;
+    terminalId: number;
+    cashierId: number;
+    referenceNo?: string | null;
+    auditIpAddress?: string | null;
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
+    await acquireClosedOrderWrite(tx, input.orderId);
+    await assertNoLegacyNullLineageReturns(tx, input.orderId);
+
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
       include: {
@@ -537,7 +551,13 @@ export async function refundOrder(input: {
       },
     });
     if (!order) throw new ServiceError("Order not found");
-    if (order.status !== "Closed") throw new ServiceError("Only closed orders can be refunded");
+    if (order.status !== "Closed") {
+      throw new ServiceError(
+        "Only closed orders can be refunded",
+        "ORDER_NOT_REFUNDABLE",
+        409,
+      );
+    }
 
     const amount = input.amount ?? order.grandTotal;
     if (amount <= 0n) throw new ServiceError("Refund amount must be positive");
@@ -545,25 +565,56 @@ export async function refundOrder(input: {
       throw new ServiceError("Refund amount cannot exceed order grand total");
     }
 
-    const refundOrderRecord = await createOrderWithUniqueNumber((orderNumber) =>
-      tx.order.create({
-        data: {
-          orderNumber,
-          orderType: "Refund",
-          status: "Closed",
-          customerId: order.customerId,
-          cashierId: input.cashierId,
-          subTotal: -amount,
-          grandTotal: -amount,
-          notes: `Refund for ${order.orderNumber}: ${input.reason}`,
-          terminalId: input.terminalId,
-          shiftId: order.shiftId,
-          originalOrderId: order.id,
-        },
-      }),
+    const alreadyRefunded = await sumCommittedRefundAbsolute(tx, order.id);
+    const remaining = remainingRefundableAmount(order.grandTotal, alreadyRefunded);
+    assertRefundWithinRemaining(amount, remaining);
+
+    // Existing rule: refund restores full sold quantity per line. Claim that
+    // quantity so concurrent returns cannot restore the same units.
+    const quantityClaims = order.orderItems.map((item) => ({
+      orderItemId: item.id,
+      claimQty: item.quantity,
+    }));
+    await claimSourceReturnQuantities(tx, order.id, quantityClaims);
+
+    const refundOrderRecord = await createOrderWithUniqueNumber(
+      (orderNumber) =>
+        tx.order.create({
+          data: {
+            orderNumber,
+            orderType: "Refund",
+            status: "Closed",
+            customerId: order.customerId,
+            cashierId: input.cashierId,
+            subTotal: -amount,
+            grandTotal: -amount,
+            notes: `Refund for ${order.orderNumber}: ${input.reason}`,
+            terminalId: input.terminalId,
+            shiftId: order.shiftId,
+            originalOrderId: order.id,
+          },
+        }),
+      tx,
     );
 
     for (const item of order.orderItems) {
+      const unitPrice =
+        item.lineTotal / BigInt(Math.max(1, item.quantity));
+      const lineTotal = unitPrice * BigInt(item.quantity);
+      await tx.orderItem.create({
+        data: {
+          orderId: refundOrderRecord.id,
+          productId: item.productId,
+          variantId: item.variantId,
+          quantity: -item.quantity,
+          unitPrice,
+          lineTotal: -lineTotal,
+          notes: input.reason,
+          status: "Closed",
+          sourceOrderItemId: item.id,
+        },
+      });
+
       const qtyToRestore =
         item.weightKg !== null
           ? new Prisma.Decimal(item.weightKg.toString())
@@ -588,7 +639,11 @@ export async function refundOrder(input: {
     }
 
     if (order.customerId) {
-      const loyaltyPointsPerPkr = await getAppSettingInt("LoyaltyPointsPerPKR", 1);
+      const loyaltyPointsPerPkr = await getAppSettingInt(
+        "LoyaltyPointsPerPKR",
+        1,
+        tx,
+      );
       const fullPointsEarned = BigInt(
         Math.floor(Number(order.grandTotal / 100n) * loyaltyPointsPerPkr),
       );
@@ -623,7 +678,7 @@ export async function refundOrder(input: {
         where: { id: order.customerId },
       });
       if (customer) {
-        const tier = await resolveCustomerTier(customer.totalSpent);
+        const tier = await resolveCustomerTier(customer.totalSpent, tx);
         await tx.customer.update({
           where: { id: order.customerId },
           data: { tier },
@@ -688,7 +743,10 @@ export async function refundOrder(input: {
       refundOrderId: refundOrderRecord.id,
       payment,
     };
-  });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 export async function updateItemQuantity(orderItemId: number, quantity: number) {
@@ -1173,14 +1231,20 @@ export async function searchOrders(params: {
   };
 }
 
-export async function returnOrderItems(input: {
-  orderId: number;
-  items: Array<{ orderItemId: number; returnQty: number; reason: string }>;
-  refundAmount: bigint;
-  cashierId: number;
-  auditIpAddress?: string | null;
-}) {
-  return prisma.$transaction(async (tx) => {
+export async function returnOrderItems(
+  input: {
+    orderId: number;
+    items: Array<{ orderItemId: number; returnQty: number; reason: string }>;
+    refundAmount: bigint;
+    cashierId: number;
+    auditIpAddress?: string | null;
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
+    await acquireClosedOrderWrite(tx, input.orderId);
+    await assertNoLegacyNullLineageReturns(tx, input.orderId);
+
     const sourceOrder = await tx.order.findUnique({
       where: { id: input.orderId },
       include: {
@@ -1190,7 +1254,11 @@ export async function returnOrderItems(input: {
     });
     if (!sourceOrder) throw new ServiceError("Order not found");
     if (sourceOrder.status !== "Closed") {
-      throw new ServiceError("Only closed orders can be returned");
+      throw new ServiceError(
+        "Only closed orders can be returned",
+        "ORDER_NOT_REFUNDABLE",
+        409,
+      );
     }
 
     const paymentMethodId = sourceOrder.payments[0]?.paymentMethodId;
@@ -1198,36 +1266,64 @@ export async function returnOrderItems(input: {
       throw new ServiceError("Source order has no payment method");
     }
 
+    if (input.refundAmount <= 0n) {
+      throw new ServiceError("Refund amount must be positive");
+    }
+
+    const alreadyRefunded = await sumCommittedRefundAbsolute(tx, sourceOrder.id);
+    const remaining = remainingRefundableAmount(
+      sourceOrder.grandTotal,
+      alreadyRefunded,
+    );
+    assertRefundWithinRemaining(input.refundAmount, remaining);
+
     for (const row of input.items) {
       const orderItem = sourceOrder.orderItems.find(
         (item) => item.id === row.orderItemId,
       );
       if (!orderItem) {
-        throw new ServiceError(`Order item ${row.orderItemId} not found`);
+        throw new ServiceError(
+          `Order item ${row.orderItemId} not found`,
+          "ORDER_ITEM_NOT_RETURNABLE",
+          409,
+        );
       }
       if (row.returnQty > orderItem.quantity) {
         throw new ServiceError(
           `Return quantity exceeds original for item ${row.orderItemId}`,
+          "RETURN_QUANTITY_EXCEEDS_REMAINING",
+          409,
         );
       }
     }
 
-    const refundOrder = await createOrderWithUniqueNumber((orderNumber) =>
-      tx.order.create({
-        data: {
-          orderNumber,
-          orderType: "Refund",
-          status: "Closed",
-          customerId: sourceOrder.customerId,
-          cashierId: input.cashierId,
-          subTotal: -input.refundAmount,
-          grandTotal: -input.refundAmount,
-          notes: `Return for ${sourceOrder.orderNumber}`,
-          terminalId: sourceOrder.terminalId,
-          shiftId: sourceOrder.shiftId,
-          originalOrderId: sourceOrder.id,
-        },
-      }),
+    await claimSourceReturnQuantities(
+      tx,
+      sourceOrder.id,
+      input.items.map((row) => ({
+        orderItemId: row.orderItemId,
+        claimQty: row.returnQty,
+      })),
+    );
+
+    const refundOrder = await createOrderWithUniqueNumber(
+      (orderNumber) =>
+        tx.order.create({
+          data: {
+            orderNumber,
+            orderType: "Refund",
+            status: "Closed",
+            customerId: sourceOrder.customerId,
+            cashierId: input.cashierId,
+            subTotal: -input.refundAmount,
+            grandTotal: -input.refundAmount,
+            notes: `Return for ${sourceOrder.orderNumber}`,
+            terminalId: sourceOrder.terminalId,
+            shiftId: sourceOrder.shiftId,
+            originalOrderId: sourceOrder.id,
+          },
+        }),
+      tx,
     );
 
     for (const row of input.items) {
@@ -1248,6 +1344,7 @@ export async function returnOrderItems(input: {
           lineTotal: -lineTotal,
           notes: row.reason,
           status: "Closed",
+          sourceOrderItemId: orderItem.id,
         },
       });
 
@@ -1312,7 +1409,10 @@ export async function returnOrderItems(input: {
       refundOrderNumber: refundOrder.orderNumber,
       payment,
     };
-  });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 async function getAppSettingInt(

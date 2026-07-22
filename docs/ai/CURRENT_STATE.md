@@ -4,27 +4,31 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
 
 ## Baseline
 
-- Current `main` hash: `11b1a918a32ca8a453bb2735c089c02faf316172`
-  (merge of PR #13, fix/p0a-checkout-payment-idempotency; includes merged
-  SEC-02B, SEC-04A, SEC-05A, SEC-05B, SEC-05C, and P0-A)
+- Current `main` hash: `e9507bb38a6ace597900793a83537eb0f19162df`
+  (merge of PR #14, fix/p0b-order-financial-concurrency; includes merged
+  SEC-02B, SEC-04A, SEC-05A, SEC-05B, SEC-05C, P0-A, and P0-B)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
 ## In-flight (not merged)
 
-- **P0-B** — Order financial concurrency for different-key checkout and
-  partial-payment races. Implemented and verified on branch
-  `fix/p0b-order-financial-concurrency` (base `main`
-  `11b1a918a32ca8a453bb2735c089c02faf316172`); not merged. See
-  `docs/security/order-financial-concurrency.md`.
+- **P0-C1** — Durable refund/return idempotency and different-key monetary /
+  quantity concurrency. Implemented and verified on branch
+  `fix/p0c1-refund-return-idempotency` (base `main`
+  `e9507bb38a6ace597900793a83537eb0f19162df`); not merged. See
+  `docs/security/refund-return-idempotency.md`.
 
 ## Verified counts
 
 - Prisma migration head (main): `20260724_000000_add_financial_idempotency_records`
-- Test files on main: **88** / tests **1024** (zero skipped)
-- Branch totals after P0-B verification: **98 files / 1100 tests**
-  (zero skipped, no `.only`)
+- On branch P0-C1: migration
+  `20260725_000000_add_order_item_return_quantity` added
+- Test files on main: **98** / tests **1100** (zero skipped)
+- Branch P0-C1 focused suite: **14** files / **87** tests (includes shared
+  `idempotency-source-regression` coverage of the four financial ops)
+- Branch totals after full `npm run test`: **111** files / **1168** tests
+  (zero skipped)
 - CI: GitHub Actions workflow **"Quality Gates"**
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
 
@@ -41,29 +45,26 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
 - **SEC-05B** — audit integrity policy and transactional required audits
 - **SEC-05C** — shift-close and required audit atomicity
 - **P0-A** — durable checkout and payment idempotency
+- **P0-B** — order financial concurrency (different-key checkout/payment)
 - Cursor plugin operating model
 
 ## Backend contracts requiring future frontend changes
 
 - Password rotation, explicit PIN/manager selection, manager approval tokens,
   SEC-04A dedicated order routes (unchanged from prior phases).
-- **P0-A:** checkout and partial-payment clients must send `Idempotency-Key`
-  and retry with the same key on lost responses / `IDEMPOTENCY_IN_PROGRESS`.
-- **P0-B:** on `409` order financial conflicts, re-read order state before
-  starting a new attempt with a **new** idempotency key.
+- **P0-A/P0-B:** checkout and partial-payment `Idempotency-Key` + 409 handling.
+- **P0-C1:** refund and return clients must send `Idempotency-Key`; on
+  financial/quantity `409` or `RETURN_HISTORY_RECONCILIATION_REQUIRED`,
+  re-read order state before a new attempt.
 
 ## Current limitations
 
 - Frontend remains incomplete behind backend contracts.
-- P0-B is on a branch, not merged. Refund/return/void concurrency and
-  idempotency, physical idempotency-record cleanup, remaining SEC-04 work,
-  and other P0 items remain.
-- SQLite only; PostgreSQL deferred. P0-B does not claim PostgreSQL locking
-  has been production-tested.
-- Authoritative terminal binding for idempotency uses session terminal when
-  present; otherwise sentinel `t:none`.
-- General order locking / versioning is **not** complete—only checkout and
-  partial-payment financial transitions.
+- P0-C1 is on a branch, not merged. Void idempotency (P0-C2), physical
+  historical return reconciliation tooling, and idempotency cleanup remain.
+- SQLite only; PostgreSQL deferred.
+- Legacy null-lineage return rows block further merchandise returns until
+  controlled reconciliation (deferred).
 
 ## Maintenance rule
 

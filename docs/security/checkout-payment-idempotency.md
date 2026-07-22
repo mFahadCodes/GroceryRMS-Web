@@ -148,8 +148,10 @@ metadata.
 ## Deferred
 
 - Physical purge/cleanup of expired rows
-- Refund / return / void / discount idempotency
+- Void / discount idempotency
 - General API idempotency middleware
 - Redis / distributed locks
+- Refund/return idempotency — **done in P0-C1**
+  (`docs/security/refund-return-idempotency.md`)
 - Stronger checkout row-locking for different-key concurrency — **done in P0-B**
   (`docs/security/order-financial-concurrency.md`)

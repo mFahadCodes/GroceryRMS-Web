@@ -18,6 +18,8 @@ export const IDEMPOTENCY_TERMINAL_SENTINEL = "t:none";
 export const FINANCIAL_IDEMPOTENCY_OPERATIONS = [
   "order.checkout",
   "order.partial-payment",
+  "order.refund",
+  "order.return",
 ] as const;
 
 export type FinancialIdempotencyOperation =
