@@ -630,12 +630,18 @@ model OrderItem {
   // §7.4 retail extensions
   weightKg       Decimal?    @map("weight_kg")
   scannedBarcode String?     @map("scanned_barcode")
+  // P0-C1: authoritative returned-quantity counter + refund/return lineage
+  returnedQuantity  Int  @default(0) @map("returned_quantity")
+  sourceOrderItemId Int? @map("source_order_item_id")
 
-  order   Order           @relation(fields: [orderId], references: [id], onDelete: NoAction)
-  product Product         @relation(fields: [productId], references: [id], onDelete: NoAction)
-  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction)
+  order             Order           @relation(fields: [orderId], references: [id], onDelete: NoAction)
+  product           Product         @relation(fields: [productId], references: [id], onDelete: NoAction)
+  variant           ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction)
+  sourceOrderItem   OrderItem?      @relation("OrderItemReturnLineage", fields: [sourceOrderItemId], references: [id], onDelete: SetNull)
+  returnOrderItems  OrderItem[]     @relation("OrderItemReturnLineage")
 
   @@index([orderId])
+  @@index([sourceOrderItemId])
   @@map("order_items")
 }
 
