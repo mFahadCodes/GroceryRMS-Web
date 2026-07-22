@@ -14,6 +14,15 @@ import {
   buildOrderVoidAuditMetadata,
 } from "@/lib/security/audit-metadata";
 import {
+  acquirePayableOrderWrite,
+  assertPaymentWithinRemaining,
+  claimCheckoutCompletion,
+  claimOrderClosedFromPayable,
+  claimOrderPartiallyPaid,
+  remainingBalance,
+  sumPaymentAmounts,
+} from "@/lib/security/order-financial-concurrency";
+import {
   consumeManagerApprovalGrant,
   type ManagerApprovalRequester,
 } from "@/lib/services/manager-approval-service";
@@ -848,6 +857,9 @@ export async function applyPartialPayment(
   txClient?: Prisma.TransactionClient,
 ) {
   const run = async (tx: Prisma.TransactionClient) => {
+    // P0-B: claim a payable order write before trusting payment aggregates.
+    await acquirePayableOrderWrite(tx, input.orderId);
+
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
       include: {
@@ -860,7 +872,11 @@ export async function applyPartialPayment(
     });
     if (!order) throw new ServiceError("Order not found");
     if (order.status !== "Open" && order.status !== "PartiallyPaid") {
-      throw new ServiceError("Order must be Open or PartiallyPaid");
+      throw new ServiceError(
+        "Order must be Open or PartiallyPaid",
+        "ORDER_NOT_PAYABLE",
+        409,
+      );
     }
 
     const paymentMethod = await tx.paymentMethod.findUnique({
@@ -869,6 +885,10 @@ export async function applyPartialPayment(
     if (!paymentMethod?.isActive) {
       throw new ServiceError("Payment method not found");
     }
+
+    const paidSoFar = sumPaymentAmounts(order.payments);
+    const remaining = remainingBalance(order.grandTotal, paidSoFar);
+    assertPaymentWithinRemaining(input.amount, remaining);
 
     await tx.payment.create({
       data: {
@@ -882,10 +902,7 @@ export async function applyPartialPayment(
       },
     });
 
-    const allPayments = await tx.payment.findMany({
-      where: { orderId: order.id },
-    });
-    const paidTotal = allPayments.reduce((sum, payment) => sum + payment.amount, 0n);
+    const paidTotal = paidSoFar + input.amount;
     const isFullyPaid = paidTotal >= order.grandTotal;
 
     if (isFullyPaid) {
@@ -894,10 +911,7 @@ export async function applyPartialPayment(
         data: { status: "Paid" },
       });
 
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: "Closed" },
-      });
+      await claimOrderClosedFromPayable(tx, order.id);
 
       await processOrderCompletion(tx, {
         orderId: order.id,
@@ -907,19 +921,8 @@ export async function applyPartialPayment(
         customerId: order.customerId,
         orderItems: order.orderItems,
       });
-    }
-
-    const updated = await tx.order.findUnique({
-      where: { id: order.id },
-      include: orderInclude,
-    });
-    if (!updated) throw new ServiceError("Order not found after update");
-
-    if (!isFullyPaid) {
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: "PartiallyPaid" },
-      });
+    } else {
+      await claimOrderPartiallyPaid(tx, order.id);
     }
 
     if (order.shiftId) {
@@ -949,11 +952,12 @@ export async function applyPartialPayment(
       where: { id: order.id },
       include: orderInclude,
     });
+    if (!finalOrder) throw new ServiceError("Order not found after update");
 
     return {
-      order: finalOrder ?? updated,
+      order: finalOrder,
       paidTotal,
-      remaining: order.grandTotal > paidTotal ? order.grandTotal - paidTotal : 0n,
+      remaining: remainingBalance(order.grandTotal, paidTotal),
     };
   };
 
@@ -1336,11 +1340,14 @@ async function getAppSettingBigInt(
   }
 }
 
-async function resolveCustomerTier(totalSpent: bigint): Promise<CustomerTier> {
+async function resolveCustomerTier(
+  totalSpent: bigint,
+  store: Pick<Prisma.TransactionClient, "appSetting"> = prisma,
+): Promise<CustomerTier> {
   const [platinum, gold, silver] = await Promise.all([
-    getAppSettingBigInt("TierPlatinumThreshold", 10_000_000n),
-    getAppSettingBigInt("TierGoldThreshold", 5_000_000n),
-    getAppSettingBigInt("TierSilverThreshold", 2_000_000n),
+    getAppSettingBigInt("TierPlatinumThreshold", 10_000_000n, store),
+    getAppSettingBigInt("TierGoldThreshold", 5_000_000n, store),
+    getAppSettingBigInt("TierSilverThreshold", 2_000_000n, store),
   ]);
 
   if (totalSpent >= platinum) return "Platinum";
@@ -1584,7 +1591,11 @@ async function processOrderCompletion(
     return;
   }
 
-  const loyaltyPointsPerPkr = await getAppSettingInt("LoyaltyPointsPerPKR", 1);
+  const loyaltyPointsPerPkr = await getAppSettingInt(
+    "LoyaltyPointsPerPKR",
+    1,
+    tx,
+  );
   const pointsEarned = BigInt(
     Math.floor(Number(input.grandTotal / 100n) * loyaltyPointsPerPkr),
   );
@@ -1628,7 +1639,7 @@ async function processOrderCompletion(
 
   const customer = await tx.customer.findUnique({ where: { id: customerId } });
   if (customer) {
-    const tier = await resolveCustomerTier(customer.totalSpent);
+    const tier = await resolveCustomerTier(customer.totalSpent, tx);
     await tx.customer.update({
       where: { id: customerId },
       data: { tier },
@@ -1685,7 +1696,9 @@ export async function checkoutFast(
   });
 
   if (!order) throw new ServiceError("Order not found");
-  if (order.status !== "Open") throw new ServiceError("Order is not open");
+  if (order.status !== "Open") {
+    throw new ServiceError("Order is not open", "ORDER_NOT_OPEN", 409);
+  }
   if (order.orderItems.length === 0) throw new ServiceError("Order has no items");
 
   const openShift = await (txClient ?? prisma).shift.findFirst({
@@ -1786,33 +1799,29 @@ export async function checkoutFast(
   }
 
   const runWrites = async (tx: Prisma.TransactionClient) => {
-    if (checkoutNotes !== undefined) {
-      await tx.order.update({
-        where: { id: order.id },
-        data: { notes: checkoutNotes },
-      });
-    }
-    if (customerId !== null && customerId !== undefined) {
-      await tx.order.update({
-        where: { id: order.id },
-        data: { customerId },
-      });
+    // P0-B: authoritative re-read + conditional Open → Closed before side effects.
+    const liveOrder = await tx.order.findUnique({
+      where: { id: order.id },
+      select: { id: true, status: true },
+    });
+    if (!liveOrder || liveOrder.status !== "Open") {
+      throw new ServiceError("Order is not open", "ORDER_NOT_OPEN", 409);
     }
 
-    await tx.order.update({
-      where: { id: order.id },
-      data: {
-        subTotal,
-        discountAmount: totals.discountAmount,
-        taxAmount: totals.taxAmount,
-        serviceCharge: totals.serviceCharge,
-        grandTotal: totals.grandTotal,
-        status: "Closed",
-        shiftId: openShift.id,
-        terminalId: input.terminalId,
-        cashierId: input.cashierId,
-        invoiceNumber: formatInvoiceNumber(order.id),
-      },
+    await claimCheckoutCompletion(tx, order.id, {
+      ...(checkoutNotes !== undefined ? { notes: checkoutNotes } : {}),
+      ...(customerId !== null && customerId !== undefined
+        ? { customerId }
+        : {}),
+      subTotal,
+      discountAmount: totals.discountAmount,
+      taxAmount: totals.taxAmount,
+      serviceCharge: totals.serviceCharge,
+      grandTotal: totals.grandTotal,
+      shiftId: openShift.id,
+      terminalId: input.terminalId,
+      cashierId: input.cashierId,
+      invoiceNumber: formatInvoiceNumber(order.id),
     });
 
     for (const paymentRow of paymentRows) {

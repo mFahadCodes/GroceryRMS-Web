@@ -5,8 +5,9 @@ checkout and partial-payment mutations. Full payment is created inside checkout;
 there is no separate full-payment API route.
 
 Status: implemented and verified on branch
-`fix/p0a-checkout-payment-idempotency` (base `main`
-`8511945cc5015e13dc6c3332d8431a1ca57c68a4`). Not merged.
+`fix/p0a-checkout-payment-idempotency`; merged to `main` as
+`11b1a918a32ca8a453bb2735c089c02faf316172`. Different-key order races are covered
+by P0-B (see `docs/security/order-financial-concurrency.md`).
 
 ## Threat model
 
@@ -120,7 +121,13 @@ At most one concurrent mutation succeeds per scope. Matching losers receive a
 replay (if completed) or `IDEMPOTENCY_IN_PROGRESS` (retry with the same key).
 Mismatched concurrent payloads never mutate.
 
-SQLite serializes writers; the unique scope hash remains the integrity guarantee.
+SQLite serializes writers; the unique scope hash remains the integrity guarantee
+for **same-key** races.
+
+**Different-key** races on the same order are handled by P0-B order financial
+concurrency (`docs/security/order-financial-concurrency.md`): conditional order
+status transitions and in-transaction remaining-balance checks. Idempotency
+alone does not authorize duplicate checkout or overpayment.
 
 ## Audit integration
 
@@ -144,4 +151,5 @@ metadata.
 - Refund / return / void / discount idempotency
 - General API idempotency middleware
 - Redis / distributed locks
-- Stronger checkout row-locking for different-key concurrency (separate P0)
+- Stronger checkout row-locking for different-key concurrency — **done in P0-B**
+  (`docs/security/order-financial-concurrency.md`)

@@ -14,16 +14,16 @@ Last updated: 2026-07-22
 - **SEC-05A** — Centralized audit metadata redaction and safe audit read behavior. See `docs/security/audit-redaction.md`.
 - **SEC-05B** — Audit integrity policy, explicit event metadata contracts, and transaction-policy standardization. See `docs/security/audit-integrity-policy.md`.
 - **SEC-05C** — Shift-close and required audit atomicity. See `docs/security/shift-close-audit-atomicity.md`.
+- **P0-A** — Durable checkout and payment idempotency. See `docs/security/checkout-payment-idempotency.md`.
 - Cursor plugin operating model and security-review templates.
 
 ## In flight (implemented and verified on a branch, not merged)
 
-- **P0-A** — Durable checkout and payment idempotency. Branch
-  `fix/p0a-checkout-payment-idempotency` (base `main`
-  `8511945cc5015e13dc6c3332d8431a1ca57c68a4`). Required `Idempotency-Key` for
-  checkout and partial payment; durable scope-hash records; atomic reservation,
-  mutation, required audit, and replay snapshot. See
-  `docs/security/checkout-payment-idempotency.md`.
+- **P0-B** — Order financial concurrency for different-key checkout and
+  partial-payment races. Branch `fix/p0b-order-financial-concurrency` (base
+  `main` `11b1a918a32ca8a453bb2735c089c02faf316172`). Conditional order status
+  transitions, in-transaction remaining-balance checks, no schema change. See
+  `docs/security/order-financial-concurrency.md`.
 
 ## Next priorities (in order)
 
@@ -31,18 +31,17 @@ Last updated: 2026-07-22
    historical physical scrubbing (offline, separately approved).
 2. **SEC-04 (remainder)** — Broader authorization review of remaining order
    surfaces beyond the generic update path.
-3. **P0** — Refund/return/void idempotency.
+3. **P0** — Refund/return/void idempotency and concurrency.
 4. **P0** — Order state and parent-child invariants.
-5. **P0** — Atomic checkout and stock enforcement (different-key concurrency).
-6. **P0** — Configured tax and inclusive-tax correctness.
-7. **P0** — Counted shift reconciliation (beyond close atomicity).
-8. Production database (PostgreSQL) and deployment hardening.
-9. Frontend contract integration (including P0-A Idempotency-Key UX).
+5. **P0** — Configured tax and inclusive-tax correctness.
+6. **P0** — Counted shift reconciliation (beyond close atomicity).
+7. Production database (PostgreSQL) and deployment hardening.
+8. Frontend contract integration (Idempotency-Key UX and 409 financial-conflict handling).
 
 ## Deferred
 
 - PostgreSQL migration and production deployment hardening until P0/security items land.
-- All frontend work (password-rotation UI, explicit user/manager selection, SEC-02B token UX, SEC-04A client migration, P0-A key generation).
+- All frontend work (password-rotation UI, explicit user/manager selection, SEC-02B token UX, SEC-04A client migration, P0-A/P0-B key and conflict UX).
 - Physical purge of expired idempotency records.
 - SEC-02B dual control; self-approval remains allowed through PIN+grant.
 - SEC-02B strong trusted-terminal binding.
@@ -51,5 +50,7 @@ Last updated: 2026-07-22
 - Consolidation of dedicated notes vs generic `updateMeta` notes.
 - Physical scrubbing of pre-SEC-05A audit rows; audit encryption/signing/WORM/SIEM.
 - Shift opening as transaction-required (close is SEC-05C).
+- General order versioning / distributed locks / Redis.
+- Schema `paidAmount` / `version` columns (not required for P0-B).
 
 Do not mark any item complete without a merged implementation and passing gates.

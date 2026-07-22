@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`8511945…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`11b1a918…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -51,25 +51,32 @@ branch are collected under "In-flight decisions" and are not yet binding on main
 - **Shift close is transaction-required.** Canonical actions `SHIFT_CLOSE` and
   `CLOSE_SHIFT` mutate the shift and write the required audit in one Prisma
   interactive transaction with a conditional `endedAt: null` transition.
+- **Checkout and partial payment require `Idempotency-Key` (P0-A).** Raw keys are
+  never stored; only SHA-256 digests. Scope uniqueness uses a non-null
+  `scopeHash`. Reservation, mutation, required audit, and completed replay
+  snapshot share one Prisma transaction. Matching replay does not re-run
+  business logic or emit another business audit. Authoritative terminal scope
+  uses `session.authoritative.terminalId` or sentinel `t:none`. Seven-day
+  replay window; physical cleanup deferred. See
+  `docs/security/checkout-payment-idempotency.md`.
 
 ## Money
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `fix/p0a-checkout-payment-idempotency`, not merged)
+## In-flight decisions (branch `fix/p0b-order-financial-concurrency`, not merged)
 
-These are implemented and verified on the P0-A branch (base `main` `8511945…`)
-and become binding only once merged. See `docs/security/checkout-payment-idempotency.md`.
+These are implemented and verified on the P0-B branch (base `main` `11b1a918…`)
+and become binding only once merged. See
+`docs/security/order-financial-concurrency.md`.
 
-- **Checkout and partial payment require `Idempotency-Key`.** Raw keys are never
-  stored; only SHA-256 digests. Scope uniqueness uses a non-null `scopeHash`.
-- **Reservation, mutation, required audit, and completed replay snapshot share
-  one Prisma transaction.** Matching replay does not re-run business logic or
-  emit another business audit.
-- **Authoritative terminal scope** uses `session.authoritative.terminalId` or
-  sentinel `t:none`; request body terminal cannot alter scope.
-- **Seven-day replay window** with conservative no-reuse-after-expiry behavior.
-  Physical cleanup is deferred. Refund/return/void idempotency is deferred.
+- **Order row is the different-key concurrency boundary** for checkout and
+  partial payment. Conditional `updateMany` on `Order.status` plus in-transaction
+  payment-sum remaining checks; no new schema columns.
+- **Losing different-key requests** create no payment, stock effect, success
+  audit, or completed idempotency record; they return stable `409` conflicts.
+- **Same-key P0-A replay** remains unchanged. Refund/return/void concurrency is
+  deferred. General order locking is not claimed complete.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.
