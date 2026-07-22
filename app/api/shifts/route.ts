@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok, paginated } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
 import { buildShiftAuditMetadata } from "@/lib/security/audit-metadata";
+import { resolveClientIp } from "@/lib/client-ip";
 import { serializeRecord } from "@/lib/api/serialize";
 import {
   closeShift,
@@ -85,20 +86,14 @@ export async function POST(request: NextRequest) {
       return ok(serializeRecord(shift), 201);
     }
 
+    // SEC-05C: CLOSE_SHIFT audit is transaction-required inside closeShift.
     const shift = await closeShift({
       shiftId: parsed.data.shiftId,
       userId: auth.session.user.id,
       closingBalance: parsed.data.closingBalance,
       notes: parsed.data.notes,
-    });
-    await auditFromRequest(request, {
-      userId: auth.session.user.id,
-      action: "CLOSE_SHIFT",
-      recordId: shift.id,
-      newValues: buildShiftAuditMetadata({
-        balance: parsed.data.closingBalance,
-        notes: parsed.data.notes,
-      }),
+      auditAction: "CLOSE_SHIFT",
+      auditIpAddress: resolveClientIp(request),
     });
     return ok(serializeRecord(shift));
   } catch (error) {

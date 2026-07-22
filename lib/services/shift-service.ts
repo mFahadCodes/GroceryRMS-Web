@@ -1,8 +1,11 @@
+import type { CashDrawerLog } from "@prisma/client";
 import {
   isCashDrawerRefundLog,
   isCashDrawerSaleLog,
 } from "@/lib/cash-drawer";
+import { writeRequiredAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { buildShiftCloseAuditMetadata } from "@/lib/security/audit-metadata";
 
 export async function getOpenShift(userId: number, terminalId?: number) {
   return prisma.shift.findFirst({
@@ -41,61 +44,127 @@ export async function openShift(input: {
   });
 }
 
+/**
+ * Pure shift-close cash formula. Preserves the historical close math exactly:
+ * expected = opening + cashSales + payIns - payOuts - cashRefunds
+ * discrepancy = closingBalance - expected
+ */
+export function calculateShiftCloseTotals(
+  openingBalance: bigint,
+  cashDrawerLogs: Array<Pick<CashDrawerLog, "type" | "description" | "amount">>,
+  closingBalance: bigint,
+) {
+  const cashSales = cashDrawerLogs
+    .filter((log) => isCashDrawerSaleLog(log))
+    .reduce((sum, log) => sum + log.amount, 0n);
+  const payIns = cashDrawerLogs
+    .filter((log) => log.type === "PayIn")
+    .reduce((sum, log) => sum + log.amount, 0n);
+  const payOuts = cashDrawerLogs
+    .filter((log) => log.type === "PayOut")
+    .reduce((sum, log) => sum + log.amount, 0n);
+  const cashRefunds = cashDrawerLogs
+    .filter((log) => isCashDrawerRefundLog(log))
+    .reduce((sum, log) => sum + log.amount, 0n);
+
+  const expectedBalance =
+    openingBalance + cashSales + payIns - payOuts - cashRefunds;
+  const discrepancy = closingBalance - expectedBalance;
+
+  return {
+    cashSales,
+    payIns,
+    payOuts,
+    cashRefunds,
+    expectedBalance,
+    discrepancy,
+  };
+}
+
+export type ShiftCloseAuditAction = "CLOSE_SHIFT" | "SHIFT_CLOSE";
+
+/**
+ * SEC-05C: close mutation and required audit share one Prisma transaction.
+ * Concurrent closes use a conditional update (`endedAt: null`) so at most one
+ * request succeeds; the loser sees already-closed and writes no success audit.
+ */
 export async function closeShift(input: {
   shiftId: number;
   userId: number;
   closingBalance: bigint;
   notes?: string | null;
+  auditAction: ShiftCloseAuditAction;
+  auditIpAddress?: string | null;
 }) {
-  const shift = await prisma.shift.findUnique({
-    where: { id: input.shiftId },
-    include: { cashDrawerLogs: true },
-  });
-  if (!shift || shift.userId !== input.userId) {
-    throw new Error("Shift not found");
-  }
-  if (shift.endedAt) {
-    throw new Error("Shift is already closed");
-  }
+  return prisma.$transaction(async (tx) => {
+    const shift = await tx.shift.findUnique({
+      where: { id: input.shiftId },
+      include: { cashDrawerLogs: true },
+    });
+    if (!shift || shift.userId !== input.userId) {
+      throw new Error("Shift not found");
+    }
+    if (shift.endedAt) {
+      throw new Error("Shift is already closed");
+    }
 
-  const activeOrderCount = await prisma.order.count({
-    where: {
-      shiftId: input.shiftId,
-      isActive: true,
-      status: { in: ["Open", "PartiallyPaid", "Packed", "OutForDelivery"] },
-    },
-  });
-  if (activeOrderCount > 0) {
-    throw new Error("Cannot close shift with active or unpaid orders.");
-  }
+    const activeOrderCount = await tx.order.count({
+      where: {
+        shiftId: input.shiftId,
+        isActive: true,
+        status: { in: ["Open", "PartiallyPaid", "Packed", "OutForDelivery"] },
+      },
+    });
+    if (activeOrderCount > 0) {
+      throw new Error("Cannot close shift with active or unpaid orders.");
+    }
 
-  const cashSales = shift.cashDrawerLogs
-    .filter((log) => isCashDrawerSaleLog(log))
-    .reduce((sum, log) => sum + log.amount, 0n);
-  const payIns = shift.cashDrawerLogs
-    .filter((log) => log.type === "PayIn")
-    .reduce((sum, log) => sum + log.amount, 0n);
-  const payOuts = shift.cashDrawerLogs
-    .filter((log) => log.type === "PayOut")
-    .reduce((sum, log) => sum + log.amount, 0n);
-  const cashRefunds = shift.cashDrawerLogs
-    .filter((log) => isCashDrawerRefundLog(log))
-    .reduce((sum, log) => sum + log.amount, 0n);
+    const totals = calculateShiftCloseTotals(
+      shift.openingBalance,
+      shift.cashDrawerLogs,
+      input.closingBalance,
+    );
+    const closedAt = new Date();
+    const notes = input.notes ?? shift.notes;
 
-  const expectedBalance =
-    shift.openingBalance + cashSales + payIns - payOuts - cashRefunds;
-  const discrepancy = input.closingBalance - expectedBalance;
+    // Conditional state transition: only an open shift owned by the actor
+    // may close. Exactly one row must change under concurrent contenders.
+    const updated = await tx.shift.updateMany({
+      where: {
+        id: input.shiftId,
+        userId: input.userId,
+        endedAt: null,
+      },
+      data: {
+        endedAt: closedAt,
+        closingBalance: input.closingBalance,
+        expectedBalance: totals.expectedBalance,
+        discrepancy: totals.discrepancy,
+        notes,
+      },
+    });
+    if (updated.count !== 1) {
+      throw new Error("Shift is already closed");
+    }
 
-  return prisma.shift.update({
-    where: { id: input.shiftId },
-    data: {
-      endedAt: new Date(),
-      closingBalance: input.closingBalance,
-      expectedBalance,
-      discrepancy,
-      notes: input.notes ?? shift.notes,
-    },
-    include: { terminal: true, cashDrawerLogs: true },
+    await writeRequiredAudit(tx, {
+      userId: input.userId,
+      action: input.auditAction,
+      recordId: input.shiftId,
+      newValues: buildShiftCloseAuditMetadata({
+        closingBalance: input.closingBalance,
+        expectedBalance: totals.expectedBalance,
+        discrepancy: totals.discrepancy,
+        terminalId: shift.terminalId,
+        notes,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
+
+    return tx.shift.findUniqueOrThrow({
+      where: { id: input.shiftId },
+      include: { terminal: true, cashDrawerLogs: true },
+    });
   });
 }
 

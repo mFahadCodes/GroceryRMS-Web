@@ -419,3 +419,31 @@ export function buildShiftAuditMetadata(input: {
     notesProvided: typeof input.notes === "string" && input.notes.length > 0,
   };
 }
+
+/**
+ * Transaction-required shift-close metadata. Free-text notes stay on the
+ * shift record; audit metadata records only presence/length plus the safe
+ * numeric totals that the close mutation itself persists.
+ */
+export type ShiftCloseAuditMetadata = FreeTextAuditSummary & {
+  closingBalance: string;
+  expectedBalance: string;
+  discrepancy: string;
+  terminalId: number | null;
+};
+
+export function buildShiftCloseAuditMetadata(input: {
+  closingBalance: bigint;
+  expectedBalance: bigint;
+  discrepancy: bigint;
+  terminalId: number | null;
+  notes?: string | null;
+}): ShiftCloseAuditMetadata {
+  return {
+    ...summarizeFreeTextReason(input.notes),
+    closingBalance: input.closingBalance.toString(),
+    expectedBalance: input.expectedBalance.toString(),
+    discrepancy: input.discrepancy.toString(),
+    terminalId: input.terminalId,
+  };
+}

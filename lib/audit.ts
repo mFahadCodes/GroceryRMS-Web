@@ -24,6 +24,7 @@ import type {
   RolePermissionsAuditMetadata,
   SessionForceLogoutAuditMetadata,
   SettingUpsertAuditMetadata,
+  ShiftCloseAuditMetadata,
   UserAccountAuditMetadata,
 } from "@/lib/security/audit-metadata";
 
@@ -136,6 +137,8 @@ type RequiredAuditMetadataMap = {
   UPSERT_SETTING: SettingUpsertAuditMetadata;
   RECEIVE_PURCHASE_ORDER: InventoryApplyAuditMetadata;
   APPLY_STOCK_TAKE: InventoryApplyAuditMetadata;
+  CLOSE_SHIFT: ShiftCloseAuditMetadata;
+  SHIFT_CLOSE: ShiftCloseAuditMetadata;
 };
 
 // Compile-time check: the metadata map covers exactly the registered
