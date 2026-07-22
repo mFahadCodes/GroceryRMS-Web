@@ -8,10 +8,26 @@ type ApiFailure = {
   details?: unknown;
 };
 
-export function ok<T>(data: T, status = 200) {
+export function ok<T>(
+  data: T,
+  status = 200,
+  extraHeaders?: Record<string, string>,
+) {
   return new NextResponse(serializeJson({ success: true, data }), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...extraHeaders },
+  });
+}
+
+/** Replay a stored successful financial response envelope verbatim. */
+export function okFromStoredEnvelope(
+  responseBody: string,
+  status: number,
+  extraHeaders?: Record<string, string>,
+) {
+  return new NextResponse(responseBody, {
+    status,
+    headers: { "Content-Type": "application/json", ...extraHeaders },
   });
 }
 

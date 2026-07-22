@@ -4,33 +4,30 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
 
 ## Baseline
 
-- Current `main` hash: `a200cb69b2c3b8192ee6ffd714f11558c1449d93`
-  (merge of PR #11, fix/sec-05b-audit-integrity-policy; includes merged
-  SEC-02B, SEC-04A, SEC-05A, and SEC-05B)
+- Current `main` hash: `8511945cc5015e13dc6c3332d8431a1ca57c68a4`
+  (merge of PR #12, fix/sec-05c-shift-close-audit-atomicity; includes merged
+  SEC-02B, SEC-04A, SEC-05A, SEC-05B, and SEC-05C)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
 ## In-flight (not merged)
 
-- **SEC-05C** — Shift-close and required audit atomicity. Implemented and
-  verified on branch `fix/sec-05c-shift-close-audit-atomicity` (base `main`
-  `a200cb69b2c3b8192ee6ffd714f11558c1449d93`); not merged. Makes
-  `SHIFT_CLOSE` / `CLOSE_SHIFT` transaction-required inside one authoritative
-  close transaction with conditional concurrency protection. See
-  `docs/security/shift-close-audit-atomicity.md`.
+- **P0-A** — Durable checkout and payment idempotency. Implemented and verified
+  on branch `fix/p0a-checkout-payment-idempotency` (base `main`
+  `8511945cc5015e13dc6c3332d8431a1ca57c68a4`); not merged. Protects
+  `POST /api/orders/[id]/checkout` and `POST /api/orders/[id]/partial-payment`
+  with durable `Idempotency-Key` records. Full payment exists only inside
+  checkout. See `docs/security/checkout-payment-idempotency.md`.
 
 ## Verified counts
 
 - Prisma migration head (main): `20260723_000000_add_manager_approval_grants`
-- Test files on main: **67** (all passing)
-- Tests on main: **796** (all passing, zero skipped, no `.only`)
-- On branch `fix/sec-05c-shift-close-audit-atomicity`: no schema/migration
-  change. Branch totals after full verification: **75 files / 861 tests**
-  (zero skipped, no `.only`). Focused SEC-05C coverage: **8 new files** plus
-  expanded audit policy/coverage regression tests (~65+ focused assertions).
-- Vitest `testTimeout` raised to 20s so bcrypt-heavy concurrent PIN/password
-  SQLite cases finish without aborting mid-write on slower hosts.
+- On branch P0-A: migration
+  `20260724_000000_add_financial_idempotency_records` added
+- Test files on main: **75** / tests **861** (zero skipped)
+- Branch totals after full verification: **88 files / 1024 tests**
+  (zero skipped, no `.only`)
 - CI: GitHub Actions workflow **"Quality Gates"**
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
 
@@ -45,24 +42,24 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
 - **SEC-04A** — generic order update boundary
 - **SEC-05A** — audit metadata redaction
 - **SEC-05B** — audit integrity policy and transactional required audits
-  (`docs/security/audit-integrity-policy.md`)
+- **SEC-05C** — shift-close and required audit atomicity
 - Cursor plugin operating model
 
 ## Backend contracts requiring future frontend changes
 
 - Password rotation, explicit PIN/manager selection, manager approval tokens,
   SEC-04A dedicated order routes (unchanged from prior phases).
-- SEC-05B/C: audit report compatibility preserved; high-risk free-text reasons
-  summarized in audit metadata only.
+- **P0-A:** checkout and partial-payment clients must send `Idempotency-Key`
+  and retry with the same key on lost responses / `IDEMPOTENCY_IN_PROGRESS`.
 
 ## Current limitations
 
 - Frontend remains incomplete behind backend contracts.
-- SEC-05C is on a branch, not merged. Shift opening remains best-effort.
-  Physical historical scrubbing, signing/immutability, remaining SEC-04 work,
-  and P0 business-integrity items are not complete.
+- P0-A is on a branch, not merged. Refund/return/void idempotency, physical
+  idempotency-record cleanup, remaining SEC-04 work, and other P0 items remain.
 - SQLite only; PostgreSQL deferred.
-- Terminal-level PIN throttling deferred until trustworthy terminal binding.
+- Authoritative terminal binding for idempotency uses session terminal when
+  present; otherwise sentinel `t:none`.
 
 ## Maintenance rule
 

@@ -127,9 +127,9 @@ describe("SEC-02B manager approval grants migration", () => {
     expect(tableNames(upgrade!)).toContain("manager_approval_grants");
   });
 
-  it("adds only the grants table to the existing table set", () => {
+  it("adds the idempotency table on top of the prior migration head", () => {
     expect(tableNames(upgrade!)).toEqual(
-      [...tablesBefore, "manager_approval_grants"].sort(),
+      [...tablesBefore, "idempotency_records"].sort(),
     );
   });
 

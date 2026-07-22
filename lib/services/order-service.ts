@@ -836,15 +836,18 @@ export async function applyOrderTax(orderId: number, taxRateId: number) {
   });
 }
 
-export async function applyPartialPayment(input: {
-  orderId: number;
-  paymentMethodId: number;
-  amount: bigint;
-  referenceNo?: string | null;
-  userId: number;
-  auditIpAddress?: string | null;
-}) {
-  return prisma.$transaction(async (tx) => {
+export async function applyPartialPayment(
+  input: {
+    orderId: number;
+    paymentMethodId: number;
+    amount: bigint;
+    referenceNo?: string | null;
+    userId: number;
+    auditIpAddress?: string | null;
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
       include: {
@@ -952,7 +955,10 @@ export async function applyPartialPayment(input: {
       paidTotal,
       remaining: order.grandTotal > paidTotal ? order.grandTotal - paidTotal : 0n,
     };
-  });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 export async function listOrdersPaginated(params: {
@@ -1305,15 +1311,23 @@ export async function returnOrderItems(input: {
   });
 }
 
-async function getAppSettingInt(key: string, fallback: number): Promise<number> {
-  const row = await prisma.appSetting.findUnique({ where: { key } });
+async function getAppSettingInt(
+  key: string,
+  fallback: number,
+  store: Pick<Prisma.TransactionClient, "appSetting"> = prisma,
+): Promise<number> {
+  const row = await store.appSetting.findUnique({ where: { key } });
   if (!row) return fallback;
   const parsed = Number.parseInt(row.value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-async function getAppSettingBigInt(key: string, fallback: bigint): Promise<bigint> {
-  const row = await prisma.appSetting.findUnique({ where: { key } });
+async function getAppSettingBigInt(
+  key: string,
+  fallback: bigint,
+  store: Pick<Prisma.TransactionClient, "appSetting"> = prisma,
+): Promise<bigint> {
+  const row = await store.appSetting.findUnique({ where: { key } });
   if (!row?.value) return fallback;
   try {
     return BigInt(row.value);
@@ -1441,12 +1455,13 @@ async function computeSubTotalWithBundles(
     quantity: number;
     lineTotal: bigint;
   }>,
+  store: Pick<Prisma.TransactionClient, "promotionBundle"> = prisma,
 ): Promise<{ subTotal: bigint; bundleNotes: string[] }> {
   if (orderItems.length === 0) {
     return { subTotal: 0n, bundleNotes: [] };
   }
 
-  const bundles = await prisma.promotionBundle.findMany({
+  const bundles = await store.promotionBundle.findMany({
     where: { isActive: true },
     include: { items: { where: { isActive: true } } },
     orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
@@ -1636,27 +1651,30 @@ async function processOrderCompletion(
   });
 }
 
-export async function checkoutFast(input: {
-  orderId: number;
-  paymentMethodId?: number;
-  tenderedAmount?: bigint;
-  terminalId: number;
-  cashierId: number;
-  discountPercent?: number;
-  taxPercent?: number;
-  customerId?: number | null;
-  notes?: string | null;
-  referenceNo?: string | null;
-  redeemPoints?: bigint;
-  payments?: Array<{
-    paymentMethodId: number;
-    amount: bigint;
+export async function checkoutFast(
+  input: {
+    orderId: number;
+    paymentMethodId?: number;
     tenderedAmount?: bigint;
+    terminalId: number;
+    cashierId: number;
+    discountPercent?: number;
+    taxPercent?: number;
+    customerId?: number | null;
+    notes?: string | null;
     referenceNo?: string | null;
-  }>;
-  auditIpAddress?: string | null;
-}) {
-  const order = await prisma.order.findUnique({
+    redeemPoints?: bigint;
+    payments?: Array<{
+      paymentMethodId: number;
+      amount: bigint;
+      tenderedAmount?: bigint;
+      referenceNo?: string | null;
+    }>;
+    auditIpAddress?: string | null;
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const order = await (txClient ?? prisma).order.findUnique({
     where: { id: input.orderId },
     include: {
       orderItems: {
@@ -1670,7 +1688,7 @@ export async function checkoutFast(input: {
   if (order.status !== "Open") throw new ServiceError("Order is not open");
   if (order.orderItems.length === 0) throw new ServiceError("Order has no items");
 
-  const openShift = await prisma.shift.findFirst({
+  const openShift = await (txClient ?? prisma).shift.findFirst({
     where: {
       userId: input.cashierId,
       terminalId: input.terminalId,
@@ -1686,10 +1704,11 @@ export async function checkoutFast(input: {
   const tax =
     input.taxPercent !== undefined
       ? { taxPercent: input.taxPercent, isInclusive: false }
-      : await resolveTaxRate(order.taxRateId);
+      : await resolveTaxRate(order.taxRateId, txClient ?? prisma);
 
   const { subTotal, bundleNotes } = await computeSubTotalWithBundles(
     order.orderItems,
+    txClient ?? prisma,
   );
   const bundleNoteText =
     bundleNotes.length > 0
@@ -1712,7 +1731,7 @@ export async function checkoutFast(input: {
   const customerId = input.customerId ?? order.customerId;
   const redeemPoints = input.redeemPoints ?? 0n;
   if (redeemPoints > 0n && customerId) {
-    const customer = await prisma.customer.findUnique({
+    const customer = await (txClient ?? prisma).customer.findUnique({
       where: { id: customerId },
       select: { loyaltyPoints: true },
     });
@@ -1720,12 +1739,20 @@ export async function checkoutFast(input: {
     if (customer.loyaltyPoints < redeemPoints) {
       throw new ServiceError("Insufficient loyalty points");
     }
-    const redeemRate = await getAppSettingInt("LoyaltyRedeemRate", 100);
+    const redeemRate = await getAppSettingInt(
+      "LoyaltyRedeemRate",
+      100,
+      txClient ?? prisma,
+    );
     const redeemDiscount = (redeemPoints / BigInt(Math.max(1, redeemRate))) * 100n;
     discountAmount += redeemDiscount;
   }
 
-  const serviceChargePercent = await getAppSettingInt("ServiceChargePercent", 0);
+  const serviceChargePercent = await getAppSettingInt(
+    "ServiceChargePercent",
+    0,
+    txClient ?? prisma,
+  );
   const totals = calculatePaisaTotals({
     subTotal,
     discountAmount,
@@ -1758,7 +1785,7 @@ export async function checkoutFast(input: {
     throw new ServiceError("Split payment total must equal grand total");
   }
 
-  return prisma.$transaction(async (tx) => {
+  const runWrites = async (tx: Prisma.TransactionClient) => {
     if (checkoutNotes !== undefined) {
       await tx.order.update({
         where: { id: order.id },
@@ -1860,7 +1887,10 @@ export async function checkoutFast(input: {
         payments: { include: { paymentMethod: true } },
       },
     });
-  });
+  };
+
+  if (txClient) return runWrites(txClient);
+  return prisma.$transaction(runWrites);
 }
 
 export async function getShiftOrders(

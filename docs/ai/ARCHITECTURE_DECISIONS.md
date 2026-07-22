@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`a200cb69…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`8511945…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -48,25 +48,28 @@ branch are collected under "In-flight decisions" and are not yet binding on main
   and read/print paths; raw metadata is never logged on failure.
 - **High-risk free-text reasons are summarized**, not stored verbatim, in audit
   metadata (`reasonProvided` / `reasonLength`); business records keep the text.
+- **Shift close is transaction-required.** Canonical actions `SHIFT_CLOSE` and
+  `CLOSE_SHIFT` mutate the shift and write the required audit in one Prisma
+  interactive transaction with a conditional `endedAt: null` transition.
 
 ## Money
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `fix/sec-05c-shift-close-audit-atomicity`, not merged)
+## In-flight decisions (branch `fix/p0a-checkout-payment-idempotency`, not merged)
 
-These are implemented and verified on the SEC-05C branch (base `main` `a200cb69…`)
-and become binding only once merged. See `docs/security/shift-close-audit-atomicity.md`.
+These are implemented and verified on the P0-A branch (base `main` `8511945…`)
+and become binding only once merged. See `docs/security/checkout-payment-idempotency.md`.
 
-- **Shift close is transaction-required.** Canonical actions `SHIFT_CLOSE` and
-  `CLOSE_SHIFT` mutate the shift and write the required audit in one Prisma
-  interactive transaction.
-- **Conditional close transition.** Closing uses `updateMany` constrained to
-  `endedAt: null` (and ownership) so at most one concurrent close succeeds;
-  losers get the existing already-closed conflict behavior with no success audit.
-- **Safe close audit metadata.** Closing totals and free-text note presence/length
-  may be audited; raw close notes are not. Shift open remains best-effort until a
-  dedicated redesign.
+- **Checkout and partial payment require `Idempotency-Key`.** Raw keys are never
+  stored; only SHA-256 digests. Scope uniqueness uses a non-null `scopeHash`.
+- **Reservation, mutation, required audit, and completed replay snapshot share
+  one Prisma transaction.** Matching replay does not re-run business logic or
+  emit another business audit.
+- **Authoritative terminal scope** uses `session.authoritative.terminalId` or
+  sentinel `t:none`; request body terminal cannot alter scope.
+- **Seven-day replay window** with conservative no-reuse-after-expiry behavior.
+  Physical cleanup is deferred. Refund/return/void idempotency is deferred.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.
