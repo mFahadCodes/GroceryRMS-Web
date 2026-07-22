@@ -6,11 +6,10 @@ concerns: the sanitizer prevents secret leakage; the policy registry decides
 whether an audit is part of the integrity guarantee, when it must share a
 transaction, and which metadata builders are allowed.
 
-Status: implemented and verified on branch
-`fix/sec-05b-audit-integrity-policy` (base `main`
-`f62886916318f1fcf137b2954c88d588fa5f226b`). Not merged. Physical historical
-scrubbing, cryptographic signing, hash chains, WORM/SIEM, and retention jobs
-remain deferred.
+Status: merged on `main` (`a200cb69b2c3b8192ee6ffd714f11558c1449d93`).
+Physical historical scrubbing, cryptographic signing, hash chains, WORM/SIEM,
+and retention jobs remain deferred. Shift-close transaction atomicity is
+SEC-05C (`docs/security/shift-close-audit-atomicity.md`).
 
 ## Why redaction is not enough
 
@@ -57,7 +56,7 @@ Representative events: `PASSWORD_CHANGED`, `PIN_CHANGED`, `FORCE_LOGOUT`,
 `MANAGER_APPROVAL_ISSUED`, `MANAGER_APPROVAL_CONSUMED`, `VOID_ORDER`,
 `APPLY_ORDER_DISCOUNT`, `CHECKOUT`, `PARTIAL_PAYMENT`, `REFUND_ORDER`,
 `RETURN`, `UPSERT_SETTING`, `RECEIVE_PURCHASE_ORDER`, `APPLY_STOCK_TAKE`,
-and PIN verification lifecycle events.
+`SHIFT_CLOSE`, `CLOSE_SHIFT`, and PIN verification lifecycle events.
 
 ### BEST_EFFORT
 
@@ -65,13 +64,8 @@ Use for low-risk operational metadata where audit failure must not block the
 approved operation. Failures are swallowed without logging raw metadata.
 
 Representative events: `UPDATE_ORDER_META`, catalog CRUD, customer CRUD,
-`CREATE_ORDER`, item edits, `SHIFT_CLOSE` / `CLOSE_SHIFT` / `OPEN_SHIFT`,
-`CASH_DRAWER_ENTRY`, restore markers, and similar descriptive operations.
-
-Shift close remains best effort in this branch: the current close path is not
-wrapped in a single authoritative mutation+audit transaction without a broader
-shift-service redesign. Severity: medium operational integrity; deferred with
-documented reason.
+`CREATE_ORDER`, item edits, `OPEN_SHIFT`, `CASH_DRAWER_ENTRY`, restore markers,
+and similar descriptive operations.
 
 ### ACCESS_ACTIVITY
 
@@ -147,11 +141,9 @@ Protected in SEC-05B (transaction-required, same-transaction audit):
 
 Deferred (documented, not silently claimed complete):
 
-- Shift close / open as TRANSACTION_REQUIRED — requires shift-service
-  transaction redesign (medium)
+- Shift open remains best-effort (SEC-05C covers close only)
 - Broad catalog/customer/expense/payroll best-effort callers still pass
-  `parsed.data` in some routes; sanitizer remains defense in depth; explicit
-  builders were prioritized for high-risk and order metadata paths
+  `parsed.data` in some routes; sanitizer remains defense in depth
 - Physical historical scrubbing of pre-SEC-05A rows
 - Cryptographic signing, hash chains, WORM, SIEM, retention jobs
 - Audit encryption

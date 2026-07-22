@@ -113,7 +113,8 @@ function access(entityTable: string | null): {
 /**
  * Central audit event registry. Action names are stable; existing persisted
  * action strings are preserved for report compatibility (including the
- * historical `SHIFT_CLOSE` / `CLOSE_SHIFT` pair, which are distinct routes).
+ * historical `SHIFT_CLOSE` / `CLOSE_SHIFT` pair from distinct close routes;
+ * both are transaction-required close events).
  */
 export const AUDIT_EVENTS = {
   // --- Credential and PIN lifecycle (security-sensitive) -----------------
@@ -176,7 +177,7 @@ export const AUDIT_EVENTS = {
   ADJUST_LOYALTY: bestEffort("customers"),
   APPLY_ORDER_TAX: bestEffort("orders"),
   CASH_DRAWER_ENTRY: bestEffort("cash_drawer_logs"),
-  CLOSE_SHIFT: bestEffort("shifts"),
+  CLOSE_SHIFT: required("shifts"),
   CREATE_CATEGORY: bestEffort("product_categories"),
   CREATE_CUSTOMER: bestEffort("customers"),
   CREATE_DISCOUNT: bestEffort("discounts"),
@@ -225,7 +226,7 @@ export const AUDIT_EVENTS = {
   PAY_PAYROLL: bestEffort("payroll"),
   RECALL_ORDER: bestEffort("orders"),
   SET_DEFAULT_TAX_RATE: bestEffort("app_settings"),
-  SHIFT_CLOSE: bestEffort("shifts"),
+  SHIFT_CLOSE: required("shifts"),
   UPDATE_CATEGORY: bestEffort("product_categories"),
   UPDATE_CUSTOMER: bestEffort("customers"),
   UPDATE_CUSTOMER_ADDRESS: bestEffort("customer_addresses"),

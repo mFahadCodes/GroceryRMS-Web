@@ -76,13 +76,25 @@ describe("audit critical path coverage", () => {
     },
   );
 
-  it("documents that shift close remains BEST_EFFORT (deferred from TRANSACTION_REQUIRED)", () => {
-    // Deferred: SHIFT_CLOSE / CLOSE_SHIFT stay BEST_EFFORT in audit-policy.ts
-    // until a dedicated transactional shift-close integrity package lands.
+  it("protects shift close as TRANSACTION_REQUIRED through writeRequiredAudit", () => {
     const policy = read("lib/security/audit-policy.ts");
-    expect(policy).toMatch(/SHIFT_CLOSE:\s*bestEffort\("shifts"\)/);
-    expect(policy).toMatch(/CLOSE_SHIFT:\s*bestEffort\("shifts"\)/);
-    expect(AUDIT_EVENTS.SHIFT_CLOSE.mode).toBe("BEST_EFFORT");
-    expect(AUDIT_EVENTS.CLOSE_SHIFT.mode).toBe("BEST_EFFORT");
+    expect(policy).toMatch(/SHIFT_CLOSE:\s*required\("shifts"\)/);
+    expect(policy).toMatch(/CLOSE_SHIFT:\s*required\("shifts"\)/);
+    expect(AUDIT_EVENTS.SHIFT_CLOSE.mode).toBe("TRANSACTION_REQUIRED");
+    expect(AUDIT_EVENTS.CLOSE_SHIFT.mode).toBe("TRANSACTION_REQUIRED");
+
+    const shiftService = read("lib/services/shift-service.ts");
+    expect(shiftService).toContain("writeRequiredAudit");
+    expect(shiftService).toMatch(
+      /writeRequiredAudit\(\s*tx\s*,\s*\{[\s\S]*?action:\s*input\.auditAction/,
+    );
+    expect(shiftService).toContain(
+      'export type ShiftCloseAuditAction = "CLOSE_SHIFT" | "SHIFT_CLOSE"',
+    );
+
+    const collectionRoute = read("app/api/shifts/route.ts");
+    const closeRoute = read("app/api/shifts/[id]/close/route.ts");
+    expect(collectionRoute).toContain('auditAction: "CLOSE_SHIFT"');
+    expect(closeRoute).toContain('auditAction: "SHIFT_CLOSE"');
   });
 });

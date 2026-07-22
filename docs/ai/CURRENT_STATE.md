@@ -4,88 +4,67 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
 
 ## Baseline
 
-- Current `main` hash: `f62886916318f1fcf137b2954c88d588fa5f226b`
-  (merge of PR #10, fix/sec-05a-audit-redaction; includes merged SEC-02B,
-  SEC-04A, and SEC-05A)
+- Current `main` hash: `a200cb69b2c3b8192ee6ffd714f11558c1449d93`
+  (merge of PR #11, fix/sec-05b-audit-integrity-policy; includes merged
+  SEC-02B, SEC-04A, SEC-05A, and SEC-05B)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
 ## In-flight (not merged)
 
-- **SEC-05B** — Audit integrity policy, explicit event metadata contracts, and
-  transaction-policy standardization. Implemented and verified on branch
-  `fix/sec-05b-audit-integrity-policy` (base `main`
-  `f62886916318f1fcf137b2954c88d588fa5f226b`); not merged. Adds
-  `lib/security/audit-policy.ts`, controlled wrappers in `lib/audit.ts`,
-  expanded builders in `lib/security/audit-metadata.ts`, and transactional
-  required audits for critical mutations. See
-  `docs/security/audit-integrity-policy.md`.
+- **SEC-05C** — Shift-close and required audit atomicity. Implemented and
+  verified on branch `fix/sec-05c-shift-close-audit-atomicity` (base `main`
+  `a200cb69b2c3b8192ee6ffd714f11558c1449d93`); not merged. Makes
+  `SHIFT_CLOSE` / `CLOSE_SHIFT` transaction-required inside one authoritative
+  close transaction with conditional concurrency protection. See
+  `docs/security/shift-close-audit-atomicity.md`.
 
 ## Verified counts
 
 - Prisma migration head (main): `20260723_000000_add_manager_approval_grants`
-  (history: `20260720_000000_baseline` → `20260720_010000_authoritative_sessions`
-  → `20260721_000000_add_password_rotation_state` →
-  `20260722_000000_add_pin_security_state` →
-  `20260723_000000_add_manager_approval_grants`)
-- Test files on main: **58** (all passing)
-- Tests on main: **703** (all passing, zero skipped, no `.only`)
-- On branch `fix/sec-05b-audit-integrity-policy`: no schema/migration change.
-  Focused SEC-05B coverage: **9 new files / 93+ tests** plus updates to existing
-  SEC-05A audit tests. Verified branch totals: **67 test files, 796 tests, all
-  passing, zero skipped**.
-- CI: GitHub Actions workflow **"Quality Gates"** (`.github/workflows/quality-gates.yml`)
-  — npm ci, prisma generate, lint, typecheck, test, build on Node 22
+- Test files on main: **67** (all passing)
+- Tests on main: **796** (all passing, zero skipped, no `.only`)
+- On branch `fix/sec-05c-shift-close-audit-atomicity`: no schema/migration
+  change. Branch totals after full verification: **75 files / 861 tests**
+  (zero skipped, no `.only`). Focused SEC-05C coverage: **8 new files** plus
+  expanded audit policy/coverage regression tests (~65+ focused assertions).
+- Vitest `testTimeout` raised to 20s so bcrypt-heavy concurrent PIN/password
+  SQLite cases finish without aborting mid-write on slower hosts.
+- CI: GitHub Actions workflow **"Quality Gates"**
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
 
 ## Completed phases
 
 - **Phase 4A** — quality gates and CI
-- **SEC-01A** — secure environment-driven administrator bootstrap (no fixed credentials)
-- **SEC-03A** — authoritative database sessions, `authVersion` invalidation, transactional revocation
-- **SEC-01B** — mandatory password rotation for bootstrapped admins, transactional password change
-- **SEC-02A** — versioned peppered PIN hashing, explicit-user verification, persistent throttling and lockout
-- **SEC-02B** — terminal/session-bound manager approval grants for discount and void
-  (`docs/security/manager-approval-grants.md`)
-- **SEC-04A** — generic order update narrowed to safe metadata; magic command bus removed
-  (`docs/security/order-generic-update-boundary.md`)
-- **SEC-05A** — centralized audit metadata redaction and safe audit read behavior
-  (`docs/security/audit-redaction.md`)
-- Cursor plugin operating model (`docs/ai/PLUGIN_OPERATING_MODEL.md`)
+- **SEC-01A** — secure administrator bootstrap
+- **SEC-03A** — authoritative database sessions
+- **SEC-01B** — mandatory password rotation
+- **SEC-02A** — PIN hardening and throttling
+- **SEC-02B** — manager approval grants
+- **SEC-04A** — generic order update boundary
+- **SEC-05A** — audit metadata redaction
+- **SEC-05B** — audit integrity policy and transactional required audits
+  (`docs/security/audit-integrity-policy.md`)
+- Cursor plugin operating model
 
 ## Backend contracts requiring future frontend changes
 
-- `POST /api/auth/change-password` and `mustChangePassword` session flag → password-rotation UI and forced redirect.
-- PIN login and `POST /api/auth/validate-pin` now require `{ userId, pin }` → explicit user selection UI (anonymous quick-login payloads no longer work).
-- Manager approvals require `{ managerUserId, managerPin }` → explicit manager selection UI.
-- SEC-02B adds `POST /api/auth/manager-approvals` returning a one-time approval
-  token that must be attached as `managerApprovalToken` to discount/void calls →
-  explicit manager step-up UI plus one-time token handling
-  (`docs/security/manager-approval-grants.md`).
-- SEC-04A: clients must stop sending magic note commands or financial fields to
-  `PUT /api/orders/{id}` `updateMeta`; use dedicated routes instead
-  (`docs/security/order-generic-update-boundary.md`).
-- SEC-05A: audit report responses continue to use the same envelope, but
-  `oldValues` / `newValues` are sanitized strings and related user objects
-  expose only `id` / `username` / `fullName`
-  (`docs/security/audit-redaction.md`).
-- SEC-05B (branch, not merged): audit action names and report compatibility are
-  preserved; high-risk free-text reasons are summarized in audit metadata only
-  (`docs/security/audit-integrity-policy.md`).
+- Password rotation, explicit PIN/manager selection, manager approval tokens,
+  SEC-04A dedicated order routes (unchanged from prior phases).
+- SEC-05B/C: audit report compatibility preserved; high-risk free-text reasons
+  summarized in audit metadata only.
 
 ## Current limitations
 
-- Frontend is incomplete and behind the backend contracts above.
-- SEC-05B is implemented and verified on `fix/sec-05b-audit-integrity-policy`
-  but not merged; physical historical scrubbing, signing/immutability, remaining
-  SEC-04 work, and P0 business-integrity items are not complete (see
-  `SECURITY_ROADMAP.md`).
-- Shift close remains best-effort pending a shift-service transaction redesign.
-- SQLite only; PostgreSQL production migration and deployment hardening are deferred.
-- Terminal-level PIN throttling is deliberately skipped until a trustworthy terminal binding exists (IP throttling is mandatory).
+- Frontend remains incomplete behind backend contracts.
+- SEC-05C is on a branch, not merged. Shift opening remains best-effort.
+  Physical historical scrubbing, signing/immutability, remaining SEC-04 work,
+  and P0 business-integrity items are not complete.
+- SQLite only; PostgreSQL deferred.
+- Terminal-level PIN throttling deferred until trustworthy terminal binding.
 
 ## Maintenance rule
 
-Update this file in the same branch whenever a merged task changes the hash-relevant
-facts above (counts, migration head, completed phases, contracts).
+Update this file in the same branch whenever a merged task changes the
+hash-relevant facts above.

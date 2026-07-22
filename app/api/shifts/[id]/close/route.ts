@@ -3,8 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
-import { buildShiftAuditMetadata } from "@/lib/security/audit-metadata";
+import { resolveClientIp } from "@/lib/client-ip";
 import { closeShift } from "@/lib/services/shift-service";
 import { shiftCloseBodySchema } from "@/lib/validators/shift.validators";
 
@@ -21,20 +20,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
+  // SEC-05C: SHIFT_CLOSE audit is transaction-required inside closeShift.
   const closed = await closeShift({
     shiftId,
     userId: auth.session.user.id,
     closingBalance: parsed.data.closingBalance,
     notes: parsed.data.notes,
-  });
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "SHIFT_CLOSE",
-    recordId: shiftId,
-    newValues: buildShiftAuditMetadata({
-      balance: parsed.data.closingBalance,
-      notes: parsed.data.notes,
-    }),
+    auditAction: "SHIFT_CLOSE",
+    auditIpAddress: resolveClientIp(request),
   });
   return ok(closed);
 }

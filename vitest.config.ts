@@ -14,5 +14,8 @@ export default defineConfig({
     unstubEnvs: true,
     unstubGlobals: true,
     fileParallelism: false,
+    // bcrypt-heavy concurrent PIN/password SQLite tests exceed the 5s default
+    // on slower hosts; aborted work can keep writing and poison later cases.
+    testTimeout: 20_000,
   },
 });

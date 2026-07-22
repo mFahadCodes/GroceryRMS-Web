@@ -36,6 +36,8 @@ const CRITICAL_ACTIONS = [
   "APPLY_STOCK_TAKE",
   "MANAGER_APPROVAL_ISSUED",
   "MANAGER_APPROVAL_CONSUMED",
+  "SHIFT_CLOSE",
+  "CLOSE_SHIFT",
 ] as const;
 
 const CRITICAL_SERVICE_FILES = [
@@ -46,6 +48,7 @@ const CRITICAL_SERVICE_FILES = [
   "lib/services/inventory-service.ts",
   "lib/services/manager-approval-service.ts",
   "lib/services/pin-security-service.ts",
+  "lib/services/shift-service.ts",
 ] as const;
 
 describe("audit policy source regression", () => {
