@@ -17,6 +17,7 @@ export const managerApprovalMigrationPaths = [
   "prisma/migrations/20260721_000000_add_password_rotation_state/migration.sql",
   "prisma/migrations/20260722_000000_add_pin_security_state/migration.sql",
   "prisma/migrations/20260723_000000_add_manager_approval_grants/migration.sql",
+  "prisma/migrations/20260724_000000_add_financial_idempotency_records/migration.sql",
 ];
 
 export const MANAGER_APPROVAL_NOW = new Date("2026-07-23T12:00:00.000Z");
