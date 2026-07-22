@@ -126,7 +126,6 @@ describe("generic order update route contract", () => {
       expect.objectContaining({
         userId: 2,
         action: "UPDATE_ORDER_META",
-        tableName: "orders",
         recordId: 50,
       }),
     );

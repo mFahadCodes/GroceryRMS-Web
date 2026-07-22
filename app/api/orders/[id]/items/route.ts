@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/api/rbac";
 import { serializeRecord } from "@/lib/api/serialize";
 import { fail, ok } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
+import { buildOrderItemAddedAuditMetadata } from "@/lib/security/audit-metadata";
 import {
   addItemToOrder,
   calculateTotals,
@@ -44,9 +45,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     await auditFromRequest(request, {
       userId: auth.session.user.id,
       action: "ADD_ORDER_ITEM",
-      tableName: "order_items",
       recordId: updated.id,
-      newValues: parsed.data,
+      newValues: buildOrderItemAddedAuditMetadata(parsed.data),
     });
 
     return ok(serializeRecord(order));

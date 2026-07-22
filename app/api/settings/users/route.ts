@@ -3,7 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { listUsers, createUser } from "@/lib/services/settings-service";
 import { createUserSchema } from "@/lib/validators/settings.validators";
 import { ServiceError } from "@/lib/api/service-error";
@@ -24,8 +24,11 @@ export async function POST(request: NextRequest) {
   }
   let created;
   try {
+    // SEC-05B: the CREATE_USER audit is transaction-required and written
+    // inside the service transaction.
     created = await createUser(parsed.data, {
       actorUserId: auth.session.user.id,
+      ipAddress: resolveClientIp(request),
     });
   } catch (error) {
     if (error instanceof ServiceError) {
@@ -33,12 +36,5 @@ export async function POST(request: NextRequest) {
     }
     return fail("Failed to create user", "CREATE_USER_FAILED", 500);
   }
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "CREATE_USER",
-    tableName: "users",
-    recordId: created.id,
-    newValues: { username: parsed.data.username, roleId: parsed.data.roleId },
-  });
   return ok(created, 201);
 }

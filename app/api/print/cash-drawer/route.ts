@@ -3,7 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { accessAuditFromRequest } from "@/lib/audit";
 import { buildCashDrawerCommand } from "@/lib/services/print-service";
 import { printCashDrawerBodySchema } from "@/lib/validators/print.validators";
 
@@ -19,10 +19,9 @@ export async function POST(request: NextRequest) {
 
   const command = buildCashDrawerCommand();
 
-  await auditFromRequest(request, {
+  await accessAuditFromRequest(request, {
     userId: auth.session.user.id,
     action: "OPEN_DRAWER",
-    tableName: "cash_drawer_logs",
     newValues: {
       command: command.command,
       escpos: command.escpos,

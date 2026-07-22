@@ -3,7 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { applyStockTake } from "@/lib/services/inventory-service";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -16,13 +16,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (Number.isNaN(stockTakeId)) return fail("Invalid stock take id", "INVALID_ID", 400);
   const body = await parseJsonBody<{ items?: Array<{ itemId: number; countedQty: string | number }> }>(request);
   if (!body?.items?.length) return fail("Invalid request body", "VALIDATION_ERROR", 400);
-  const applied = await applyStockTake(stockTakeId, body.items, auth.session.user.id);
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "APPLY_STOCK_TAKE",
-    tableName: "stock_takes",
-    recordId: stockTakeId,
-    newValues: body.items,
-  });
+  // SEC-05B: the APPLY_STOCK_TAKE audit is transaction-required and written
+  // inside the service transaction.
+  const applied = await applyStockTake(
+    stockTakeId,
+    body.items,
+    auth.session.user.id,
+    resolveClientIp(request),
+  );
   return ok(applied);
 }

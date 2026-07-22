@@ -1,7 +1,10 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { writeAuditRecord } from "@/lib/audit";
+import { writeRequiredAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
-import { buildPinChangedAuditMetadata } from "@/lib/security/audit-metadata";
+import {
+  buildPinChangedAuditMetadata,
+  type PinAuditReason,
+} from "@/lib/security/audit-metadata";
 import {
   deriveThrottleKey,
   hashPinV2,
@@ -131,11 +134,16 @@ export async function verifyUserPin(
         !hasFailureStateDecayed(user.pinLastFailedAt, now),
     );
     if (activeBucket || userLockActive) {
-      await writeAudit(client, {
-        actorUserId: input.actorUserId,
-        targetUserId: user?.id,
-        action: "PIN_VERIFICATION_THROTTLED",
-        reason: "throttled",
+      // The throttle audit is the only mutation on this path; give it its
+      // own transaction so the required-audit policy holds. Failure falls
+      // through to the outer catch and the verification fails closed.
+      await client.$transaction(async (transaction) => {
+        await writeAudit(transaction, {
+          actorUserId: input.actorUserId,
+          targetUserId: user?.id,
+          action: "PIN_VERIFICATION_THROTTLED",
+          reason: "throttled",
+        });
       });
       return throttledResult();
     }
@@ -416,19 +424,26 @@ function throttledResult(): PinVerificationResult {
   };
 }
 
+type PinAuditAction =
+  | "PIN_CHANGED"
+  | "PIN_HASH_UPGRADED"
+  | "PIN_LOCKOUT_RESET"
+  | "PIN_VERIFICATION_SUCCEEDED"
+  | "PIN_VERIFICATION_FAILED"
+  | "PIN_VERIFICATION_THROTTLED";
+
 async function writeAudit(
-  store: Pick<PinClient, "auditLog"> | Pick<PinTransaction, "auditLog">,
+  transaction: PinTransaction,
   input: {
     actorUserId?: number | null;
     targetUserId?: number;
-    action: string;
-    reason: string;
+    action: PinAuditAction;
+    reason: PinAuditReason;
   },
 ) {
-  await writeAuditRecord(store, {
+  await writeRequiredAudit(transaction, {
     userId: input.actorUserId ?? null,
     action: input.action,
-    tableName: "users",
     recordId: input.targetUserId ?? null,
     newValues: buildPinChangedAuditMetadata(input.reason),
   });

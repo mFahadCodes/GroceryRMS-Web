@@ -1,5 +1,7 @@
 import { Prisma } from "@prisma/client";
+import { writeRequiredAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { buildInventoryApplyAuditMetadata } from "@/lib/security/audit-metadata";
 import { formatPKR } from "@/lib/currency";
 
 export async function getInventorySummary() {
@@ -119,6 +121,7 @@ export async function receivePurchaseOrder(
   id: number,
   items: Array<{ itemId: number; quantityReceived: string | number }>,
   userId?: number,
+  auditIpAddress?: string | null,
 ) {
   return prisma.$transaction(async (tx) => {
     const po = await tx.purchaseOrder.findUnique({
@@ -152,6 +155,14 @@ export async function receivePurchaseOrder(
         },
       });
     }
+
+    await writeRequiredAudit(tx, {
+      userId: userId ?? null,
+      action: "RECEIVE_PURCHASE_ORDER",
+      recordId: id,
+      newValues: buildInventoryApplyAuditMetadata({ itemCount: items.length }),
+      ipAddress: auditIpAddress ?? null,
+    });
 
     return tx.purchaseOrder.update({
       where: { id },
@@ -217,6 +228,7 @@ export async function applyStockTake(
   stockTakeId: number,
   items: Array<{ itemId: number; countedQty: string | number }>,
   userId?: number,
+  auditIpAddress?: string | null,
 ) {
   return prisma.$transaction(async (tx) => {
     const stockTake = await tx.stockTake.findUnique({
@@ -251,6 +263,14 @@ export async function applyStockTake(
         });
       }
     }
+
+    await writeRequiredAudit(tx, {
+      userId: userId ?? null,
+      action: "APPLY_STOCK_TAKE",
+      recordId: stockTakeId,
+      newValues: buildInventoryApplyAuditMetadata({ itemCount: items.length }),
+      ipAddress: auditIpAddress ?? null,
+    });
 
     return tx.stockTake.update({
       where: { id: stockTakeId },

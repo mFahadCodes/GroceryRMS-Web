@@ -1,12 +1,16 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { CustomerTier, OrderStatus, OrderType } from "@prisma/client";
-import { writeAuditRecord } from "@/lib/audit";
+import { writeRequiredAudit } from "@/lib/audit";
 import { ServiceError } from "@/lib/api/service-error";
 import { createOrderWithUniqueNumber } from "@/lib/order-number";
 import { calculatePaisaTotals } from "@/lib/paisa-math";
 import {
+  buildOrderCheckoutAuditMetadata,
   buildOrderDiscountAuditMetadata,
+  buildOrderPartialPaymentAuditMetadata,
+  buildOrderRefundAuditMetadata,
+  buildOrderReturnAuditMetadata,
   buildOrderVoidAuditMetadata,
 } from "@/lib/security/audit-metadata";
 import {
@@ -267,19 +271,20 @@ export async function voidOrder(input: {
       include: orderInclude,
     });
 
-    if (input.approvalToken !== undefined && input.requester !== undefined) {
-      await writeAuditRecord(tx, {
-        userId: input.requester.userId,
-        action: "VOID_ORDER",
-        tableName: "orders",
-        recordId: input.orderId,
-        newValues: buildOrderVoidAuditMetadata({
-          reason: input.reason,
-          approvedByUserId: approval.approverUserId,
-        }),
-        ipAddress: input.auditIpAddress ?? null,
-      });
-    }
+    // SEC-05B: voiding an order is transaction-required regardless of the
+    // approval path used; the free-text reason stays on the order record and
+    // is never copied verbatim into audit metadata.
+    await writeRequiredAudit(tx, {
+      userId: input.requester?.userId ?? approval.approverUserId ?? null,
+      action: "VOID_ORDER",
+      recordId: input.orderId,
+      newValues: buildOrderVoidAuditMetadata({
+        reason: input.reason,
+        approvedByUserId: approval.approverUserId,
+        stockReversed: input.reverseStock ?? false,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
 
     return updated;
   });
@@ -417,21 +422,20 @@ export async function applyOrderDiscount(input: {
       },
       include: orderInclude,
     });
-    if (input.approvalToken !== undefined && input.requester !== undefined) {
-      await writeAuditRecord(tx, {
-        userId: input.requester.userId,
-        action: "APPLY_ORDER_DISCOUNT",
-        tableName: "orders",
-        recordId: input.orderId,
-        newValues: buildOrderDiscountAuditMetadata({
-          discountAmount: input.discountAmount,
-          discountPercent: input.discountPercent,
-          reason: input.reason,
-          approvedByUserId: approval.approverUserId,
-        }),
-        ipAddress: input.auditIpAddress ?? null,
-      });
-    }
+    // SEC-05B: discounts are transaction-required regardless of the approval
+    // path used; free-text reasons are summarized, never stored verbatim.
+    await writeRequiredAudit(tx, {
+      userId: input.requester?.userId ?? approval.approverUserId ?? null,
+      action: "APPLY_ORDER_DISCOUNT",
+      recordId: input.orderId,
+      newValues: buildOrderDiscountAuditMetadata({
+        discountAmount: input.discountAmount,
+        discountPercent: input.discountPercent,
+        reason: input.reason,
+        approvedByUserId: approval.approverUserId,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
     return updated;
   });
 }
@@ -509,6 +513,7 @@ export async function refundOrder(input: {
   terminalId: number;
   cashierId: number;
   referenceNo?: string | null;
+  auditIpAddress?: string | null;
 }) {
   return prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
@@ -655,6 +660,19 @@ export async function refundOrder(input: {
         },
       });
     }
+
+    await writeRequiredAudit(tx, {
+      userId: input.cashierId,
+      action: "REFUND_ORDER",
+      recordId: order.id,
+      newValues: buildOrderRefundAuditMetadata({
+        amount,
+        paymentMethodId: input.paymentMethodId,
+        reason: input.reason,
+        refundOrderId: refundOrderRecord.id,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
 
     return {
       orderId: order.id,
@@ -824,6 +842,7 @@ export async function applyPartialPayment(input: {
   amount: bigint;
   referenceNo?: string | null;
   userId: number;
+  auditIpAddress?: string | null;
 }) {
   return prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
@@ -910,6 +929,18 @@ export async function applyPartialPayment(input: {
         amount: input.amount,
       });
     }
+
+    await writeRequiredAudit(tx, {
+      userId: input.userId,
+      action: "PARTIAL_PAYMENT",
+      recordId: order.id,
+      newValues: buildOrderPartialPaymentAuditMetadata({
+        paymentMethodId: input.paymentMethodId,
+        amount: input.amount,
+        fullyPaid: isFullyPaid,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
 
     const finalOrder = await tx.order.findUnique({
       where: { id: order.id },
@@ -1137,6 +1168,7 @@ export async function returnOrderItems(input: {
   items: Array<{ orderItemId: number; returnQty: number; reason: string }>;
   refundAmount: bigint;
   cashierId: number;
+  auditIpAddress?: string | null;
 }) {
   return prisma.$transaction(async (tx) => {
     const sourceOrder = await tx.order.findUnique({
@@ -1251,6 +1283,18 @@ export async function returnOrderItems(input: {
         },
       });
     }
+
+    await writeRequiredAudit(tx, {
+      userId: input.cashierId,
+      action: "RETURN",
+      recordId: sourceOrder.id,
+      newValues: buildOrderReturnAuditMetadata({
+        itemCount: input.items.length,
+        refundAmount: input.refundAmount,
+        refundOrderId: refundOrder.id,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
 
     return {
       sourceOrderId: sourceOrder.id,
@@ -1610,6 +1654,7 @@ export async function checkoutFast(input: {
     tenderedAmount?: bigint;
     referenceNo?: string | null;
   }>;
+  auditIpAddress?: string | null;
 }) {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
@@ -1791,6 +1836,18 @@ export async function checkoutFast(input: {
       customerId,
       redeemPoints,
       orderItems: order.orderItems,
+    });
+
+    await writeRequiredAudit(tx, {
+      userId: input.cashierId,
+      action: "CHECKOUT",
+      recordId: order.id,
+      newValues: buildOrderCheckoutAuditMetadata({
+        terminalId: input.terminalId,
+        paymentMethodIds: paymentRows.map((row) => row.paymentMethodId),
+        grandTotal: totals.grandTotal,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
     });
 
     return tx.order.findUnique({

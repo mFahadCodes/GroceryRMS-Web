@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/api/rbac";
 import { serializeRecord } from "@/lib/api/serialize";
 import { fail, ok, paginated } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
+import { buildCashDrawerEntryAuditMetadata } from "@/lib/security/audit-metadata";
 import { addCashDrawerEntry, listCashDrawerLogs } from "@/lib/services/shift-service";
 import {
   cashDrawerLogQuerySchema,
@@ -64,9 +65,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
   await auditFromRequest(request, {
     userId: auth.session.user.id,
     action: "CASH_DRAWER_ENTRY",
-    tableName: "cash_drawer_logs",
     recordId: created.id,
-    newValues: parsed.data,
+    newValues: buildCashDrawerEntryAuditMetadata(parsed.data),
   });
   return ok(created, 201);
 }

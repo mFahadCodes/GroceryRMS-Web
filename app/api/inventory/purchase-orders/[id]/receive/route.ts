@@ -3,7 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { receivePurchaseOrder } from "@/lib/services/inventory-service";
 import { receivePurchaseOrderSchema } from "@/lib/validators/inventory.validators";
 
@@ -20,6 +20,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
+  // SEC-05B: the RECEIVE_PURCHASE_ORDER audit is transaction-required and
+  // written inside the service transaction.
   const updated = await receivePurchaseOrder(
     purchaseOrderId,
     parsed.data.items.map((row) => ({
@@ -27,13 +29,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       quantityReceived: row.receivedQty,
     })),
     auth.session.user.id,
+    resolveClientIp(request),
   );
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "RECEIVE_PURCHASE_ORDER",
-    tableName: "purchase_orders",
-    recordId: purchaseOrderId,
-    newValues: parsed.data.items,
-  });
   return ok(updated);
 }

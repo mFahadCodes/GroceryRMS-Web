@@ -5,7 +5,7 @@ import { requireSession } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
 import { hasPermission } from "@/lib/permissions";
 import { serializeRecord } from "@/lib/api/serialize";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { checkoutFast } from "@/lib/services/order-service";
 import { checkoutSchema } from "@/lib/validators/order.validators";
 
@@ -58,17 +58,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       referenceNo: parsed.data.referenceNo,
       redeemPoints: parsed.data.redeemPoints,
       payments: parsed.data.payments,
-    });
-
-    await auditFromRequest(request, {
-      userId: auth.session.user.id,
-      action: "CHECKOUT",
-      tableName: "orders",
-      recordId: orderId,
-      newValues: {
-        terminalId: parsed.data.terminalId,
-        payments: parsed.data.payments,
-      },
+      // SEC-05B: the CHECKOUT audit is transaction-required and written
+      // inside the checkout transaction by the order service.
+      auditIpAddress: resolveClientIp(request),
     });
 
     return ok(serializeRecord(order));

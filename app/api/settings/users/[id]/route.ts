@@ -3,7 +3,7 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { getUserById, updateUser, deleteUser } from "@/lib/services/settings-service";
 import { updateUserSchema } from "@/lib/validators/settings.validators";
 import { ServiceError } from "@/lib/api/service-error";
@@ -36,8 +36,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   }
   let updated;
   try {
+    // SEC-05B: the UPDATE_USER audit is transaction-required and written
+    // inside the service transaction with field names only.
     updated = await updateUser(userId, parsed.data, {
       actorUserId: auth.session.user.id,
+      ipAddress: resolveClientIp(request),
     });
   } catch (error) {
     if (error instanceof ServiceError) {
@@ -45,25 +48,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     }
     return fail("Failed to update user", "UPDATE_USER_FAILED", 500);
   }
-  const auditValues = {
-    ...(parsed.data.username !== undefined ? { username: parsed.data.username } : {}),
-    ...(parsed.data.fullName !== undefined ? { fullName: parsed.data.fullName } : {}),
-    ...(parsed.data.roleId !== undefined ? { roleId: parsed.data.roleId } : {}),
-    ...(parsed.data.phone !== undefined ? { phone: parsed.data.phone } : {}),
-    ...(parsed.data.email !== undefined ? { email: parsed.data.email } : {}),
-    ...(parsed.data.isActive !== undefined
-      ? { isActive: parsed.data.isActive }
-      : {}),
-    ...(parsed.data.password !== undefined ? { passwordChanged: true } : {}),
-    ...(parsed.data.pin !== undefined ? { pinChanged: true } : {}),
-  };
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "UPDATE_USER",
-    tableName: "users",
-    recordId: userId,
-    newValues: auditValues,
-  });
   return ok(updated);
 }
 
@@ -73,12 +57,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const userId = Number.parseInt(id, 10);
   if (Number.isNaN(userId)) return fail("Invalid user id", "INVALID_ID", 400);
-  const deleted = await deleteUser(userId);
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "DELETE_USER",
-    tableName: "users",
-    recordId: userId,
+  // SEC-05B: the DELETE_USER audit is transaction-required and written
+  // inside the service transaction.
+  const deleted = await deleteUser(userId, {
+    actorUserId: auth.session.user.id,
+    ipAddress: resolveClientIp(request),
   });
   return ok(deleted);
 }

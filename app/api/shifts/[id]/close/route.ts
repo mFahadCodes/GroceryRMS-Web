@@ -4,6 +4,7 @@ import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
+import { buildShiftAuditMetadata } from "@/lib/security/audit-metadata";
 import { closeShift } from "@/lib/services/shift-service";
 import { shiftCloseBodySchema } from "@/lib/validators/shift.validators";
 
@@ -29,9 +30,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
   await auditFromRequest(request, {
     userId: auth.session.user.id,
     action: "SHIFT_CLOSE",
-    tableName: "shifts",
     recordId: shiftId,
-    newValues: parsed.data,
+    newValues: buildShiftAuditMetadata({
+      balance: parsed.data.closingBalance,
+      notes: parsed.data.notes,
+    }),
   });
   return ok(closed);
 }

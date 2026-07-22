@@ -183,8 +183,8 @@ describe("safe metadata updates preserve business invariants", () => {
         request({ action: "updateMeta", notes: "audit down" }),
         context,
       );
-      // auditLog() intentionally never blocks business flow; the metadata
-      // write persists and the request still succeeds.
+      // writeBestEffortAudit intentionally never blocks business flow; the
+      // metadata write may fail while the request still succeeds.
       expect(response.status).toBe(200);
       const order = await database.client.order.findUniqueOrThrow({
         where: { id: fixture.order.id },

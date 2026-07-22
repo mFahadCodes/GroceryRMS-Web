@@ -4,7 +4,7 @@ import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
 import { serializeRecord } from "@/lib/api/serialize";
-import { auditFromRequest } from "@/lib/audit";
+import { accessAuditFromRequest } from "@/lib/audit";
 import {
   buildPrintableReceipt,
 } from "@/lib/services/print-service";
@@ -30,10 +30,9 @@ export async function POST(request: NextRequest) {
 
   const recordId = parsed.data.orderId ?? null;
 
-  await auditFromRequest(request, {
+  await accessAuditFromRequest(request, {
     userId: auth.session.user.id,
     action: "PRINT_RECEIPT",
-    tableName: "orders",
     recordId: recordId ?? undefined,
     newValues: parsed.data.orderId !== undefined
       ? { orderId: parsed.data.orderId }

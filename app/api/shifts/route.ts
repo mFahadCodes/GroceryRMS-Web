@@ -4,6 +4,7 @@ import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok, paginated } from "@/lib/api-response";
 import { auditFromRequest } from "@/lib/audit";
+import { buildShiftAuditMetadata } from "@/lib/security/audit-metadata";
 import { serializeRecord } from "@/lib/api/serialize";
 import {
   closeShift,
@@ -74,9 +75,12 @@ export async function POST(request: NextRequest) {
       await auditFromRequest(request, {
         userId: auth.session.user.id,
         action: "OPEN_SHIFT",
-        tableName: "shifts",
         recordId: shift.id,
-        newValues: parsed.data,
+        newValues: buildShiftAuditMetadata({
+          terminalId: parsed.data.terminalId,
+          balance: parsed.data.openingBalance,
+          notes: parsed.data.notes,
+        }),
       });
       return ok(serializeRecord(shift), 201);
     }
@@ -90,9 +94,11 @@ export async function POST(request: NextRequest) {
     await auditFromRequest(request, {
       userId: auth.session.user.id,
       action: "CLOSE_SHIFT",
-      tableName: "shifts",
       recordId: shift.id,
-      newValues: parsed.data,
+      newValues: buildShiftAuditMetadata({
+        balance: parsed.data.closingBalance,
+        notes: parsed.data.notes,
+      }),
     });
     return ok(serializeRecord(shift));
   } catch (error) {

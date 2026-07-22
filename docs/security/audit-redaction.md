@@ -5,10 +5,10 @@ that passwords, PINs, tokens, session identifiers, secrets, credentials,
 cookies, authorization headers, and arbitrary request bodies cannot be stored
 in new audit records or returned through audit report APIs.
 
-Status: implemented and verified on branch `fix/sec-05a-audit-redaction`
-(base `main` `bdd731f129fbd412a77ca83eeee37d0d2fab64b0`). Not merged. Broader
-SEC-05 work (transaction-policy standardization and historical physical
-scrubbing) remains open as SEC-05B.
+Status: merged on `main` (`f62886916318f1fcf137b2954c88d588fa5f226b`). Broader
+SEC-05 integrity work (transaction-policy standardization) is SEC-05B; see
+`docs/security/audit-integrity-policy.md`. Physical historical scrubbing
+remains deferred.
 
 ## Audit metadata is untrusted input
 
@@ -36,11 +36,20 @@ Entry points:
 
 Write boundary: `lib/audit.ts`
 
-- `writeAuditRecord(store, input)` — transactional and shared writes
-- `auditLog` / `auditFromRequest` — best-effort route writers wrapping the same
-  sanitizer
+- `writeRequiredAudit(transaction, input)` — transactionally required writes
+- `writeBestEffortAudit` / `auditFromRequest` — best-effort route writers
+- `writeAccessAudit` / `accessAuditFromRequest` — access/read activity
+- All paths sanitize through `serializeSafeAuditMetadata` before persistence
 - All direct `prisma.auditLog.create` / `tx.auditLog.create` calls outside
-  `lib/audit.ts` are removed
+  `lib/audit.ts` are forbidden
+- Mode, entity table, and allowed actions are owned by
+  `lib/security/audit-policy.ts` (SEC-05B); callers cannot override them
+
+Free-text void/discount/refund reasons are not stored verbatim in high-risk
+audit metadata (SEC-05B). Builders record `reasonProvided` / `reasonLength`
+only; the business record keeps the free text. Recognizable secret shapes
+(Bearer/JWT/opaque 40+ tokens/bcrypt) remain redacted by the sanitizer as
+defense in depth.
 
 ## Read/export defense in depth
 
@@ -173,9 +182,10 @@ logged.
   allowlists is deferred.
 - Setting upserts use an explicit builder that records key/dataType/presence
   only — never the raw setting value.
-- Free-text void/discount reasons remain free-text; recognizable secret shapes
-  (Bearer/JWT/opaque 40+ tokens/bcrypt) are redacted, but short opaque PINs
-  typed into reasons may still require operational discipline.
+- High-risk free-text void/discount/refund reasons are summarized in audit
+  metadata (`reasonProvided` / `reasonLength`) under SEC-05B; the business
+  record keeps the free text. Recognizable secret shapes (Bearer/JWT/opaque
+  40+ tokens/bcrypt) remain redacted by the sanitizer as defense in depth.
 - Inconsistent high-risk “best-effort vs transactional” audit policy across
   modules should be standardized as SEC-05B.
 - Physical scrubbing of pre-SEC-05A audit rows is deferred.

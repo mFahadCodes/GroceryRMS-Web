@@ -3,9 +3,8 @@ import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
 import { serializeRecord } from "@/lib/api/serialize";
-import { buildSettingUpsertAuditMetadata } from "@/lib/security/audit-metadata";
+import { resolveClientIp } from "@/lib/client-ip";
 import {
   getSettingByKey,
   upsertSetting,
@@ -32,17 +31,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
-  const updated = await upsertSetting(key, parsed.data);
-  await auditFromRequest(request, {
-    userId: auth.session.user.id,
-    action: "UPSERT_SETTING",
-    tableName: "app_settings",
-    recordId: updated.id,
-    newValues: buildSettingUpsertAuditMetadata({
-      settingKey: key,
-      dataType: parsed.data.dataType ?? "string",
-      value: parsed.data.value,
-    }),
+  // SEC-05B: the UPSERT_SETTING audit is transaction-required and written
+  // inside the service transaction with presence-only metadata.
+  const updated = await upsertSetting(key, parsed.data, {
+    actorUserId: auth.session.user.id,
+    ipAddress: resolveClientIp(request),
   });
   return ok(serializeRecord(updated));
 }

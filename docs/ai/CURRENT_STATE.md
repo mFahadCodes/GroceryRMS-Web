@@ -1,24 +1,26 @@
 # Current State
 
-Last updated: 2026-07-21 (verified against the repository, not assumed)
+Last updated: 2026-07-22 (verified against the repository, not assumed)
 
 ## Baseline
 
-- Current `main` hash: `bdd731f129fbd412a77ca83eeee37d0d2fab64b0`
-  (merge of PR #9, fix/sec-04a-order-action-bypass; includes merged SEC-02B and SEC-04A)
+- Current `main` hash: `f62886916318f1fcf137b2954c88d588fa5f226b`
+  (merge of PR #10, fix/sec-05a-audit-redaction; includes merged SEC-02B,
+  SEC-04A, and SEC-05A)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
 ## In-flight (not merged)
 
-- **SEC-05A** — Centralized audit-log redaction, bounded metadata serialization,
-  and safe audit read behavior. Implemented and verified on branch
-  `fix/sec-05a-audit-redaction` (base `main`
-  `bdd731f129fbd412a77ca83eeee37d0d2fab64b0`); not merged. Adds
-  `lib/security/audit-sanitizer.ts`, write-boundary enforcement in `lib/audit.ts`,
-  security-event metadata builders, and read-time redaction in
-  `getAuditLogReport`. See `docs/security/audit-redaction.md`.
+- **SEC-05B** — Audit integrity policy, explicit event metadata contracts, and
+  transaction-policy standardization. Implemented and verified on branch
+  `fix/sec-05b-audit-integrity-policy` (base `main`
+  `f62886916318f1fcf137b2954c88d588fa5f226b`); not merged. Adds
+  `lib/security/audit-policy.ts`, controlled wrappers in `lib/audit.ts`,
+  expanded builders in `lib/security/audit-metadata.ts`, and transactional
+  required audits for critical mutations. See
+  `docs/security/audit-integrity-policy.md`.
 
 ## Verified counts
 
@@ -27,12 +29,12 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
   → `20260721_000000_add_password_rotation_state` →
   `20260722_000000_add_pin_security_state` →
   `20260723_000000_add_manager_approval_grants`)
-- Test files on main: **49** (all passing)
-- Tests on main: **586** (all passing, zero skipped, no `.only`)
-- On branch `fix/sec-05a-audit-redaction`: no schema/migration change.
-  Focused SEC-05A coverage: **9 files / 117+ tests**. Verified branch totals:
-  **58 test files, 703 tests, all passing, zero skipped**.
-  SEC-05A adds **9 focused files and ~117 tests**.
+- Test files on main: **58** (all passing)
+- Tests on main: **703** (all passing, zero skipped, no `.only`)
+- On branch `fix/sec-05b-audit-integrity-policy`: no schema/migration change.
+  Focused SEC-05B coverage: **9 new files / 93+ tests** plus updates to existing
+  SEC-05A audit tests. Verified branch totals: **67 test files, 796 tests, all
+  passing, zero skipped**.
 - CI: GitHub Actions workflow **"Quality Gates"** (`.github/workflows/quality-gates.yml`)
   — npm ci, prisma generate, lint, typecheck, test, build on Node 22
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
@@ -48,6 +50,8 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
   (`docs/security/manager-approval-grants.md`)
 - **SEC-04A** — generic order update narrowed to safe metadata; magic command bus removed
   (`docs/security/order-generic-update-boundary.md`)
+- **SEC-05A** — centralized audit metadata redaction and safe audit read behavior
+  (`docs/security/audit-redaction.md`)
 - Cursor plugin operating model (`docs/ai/PLUGIN_OPERATING_MODEL.md`)
 
 ## Backend contracts requiring future frontend changes
@@ -62,18 +66,22 @@ Last updated: 2026-07-21 (verified against the repository, not assumed)
 - SEC-04A: clients must stop sending magic note commands or financial fields to
   `PUT /api/orders/{id}` `updateMeta`; use dedicated routes instead
   (`docs/security/order-generic-update-boundary.md`).
-- SEC-05A (branch, not merged): audit report responses continue to use the same
-  envelope, but `oldValues` / `newValues` are sanitized strings and related user
-  objects expose only `id` / `username` / `fullName`
+- SEC-05A: audit report responses continue to use the same envelope, but
+  `oldValues` / `newValues` are sanitized strings and related user objects
+  expose only `id` / `username` / `fullName`
   (`docs/security/audit-redaction.md`).
+- SEC-05B (branch, not merged): audit action names and report compatibility are
+  preserved; high-risk free-text reasons are summarized in audit metadata only
+  (`docs/security/audit-integrity-policy.md`).
 
 ## Current limitations
 
 - Frontend is incomplete and behind the backend contracts above.
-- SEC-05A is implemented and verified on `fix/sec-05a-audit-redaction` but not
-  merged; SEC-05B (audit transaction-policy standardization and historical
-  physical scrubbing), remaining SEC-04 work, and P0 business-integrity items
-  are not complete (see `SECURITY_ROADMAP.md`).
+- SEC-05B is implemented and verified on `fix/sec-05b-audit-integrity-policy`
+  but not merged; physical historical scrubbing, signing/immutability, remaining
+  SEC-04 work, and P0 business-integrity items are not complete (see
+  `SECURITY_ROADMAP.md`).
+- Shift close remains best-effort pending a shift-service transaction redesign.
 - SQLite only; PostgreSQL production migration and deployment hardening are deferred.
 - Terminal-level PIN throttling is deliberately skipped until a trustworthy terminal binding exists (IP throttling is mandatory).
 

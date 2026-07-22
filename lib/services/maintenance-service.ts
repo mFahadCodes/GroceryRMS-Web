@@ -72,11 +72,16 @@ export async function createBackupFile(): Promise<{
 
   rotateBackups(7);
 
-  await upsertSetting("LastBackupAt", {
-    value: new Date().toISOString(),
-    dataType: "string",
-    group: "Backup",
-  });
+  // System-generated marker: null actor denotes a genuine system operation.
+  await upsertSetting(
+    "LastBackupAt",
+    {
+      value: new Date().toISOString(),
+      dataType: "string",
+      group: "Backup",
+    },
+    { actorUserId: null },
+  );
 
   return { filePath, fileName };
 }
