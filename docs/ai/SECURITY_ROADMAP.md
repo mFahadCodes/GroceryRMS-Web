@@ -12,45 +12,41 @@ Last updated: 2026-07-22
 - **SEC-02B** — Terminal/session-bound manager approval grants: one-time opaque tokens, digest-only storage, 120s TTL, transactional discount/void consumption. See `docs/security/manager-approval-grants.md`.
 - **SEC-04A** — Generic order update narrowed to safe metadata; magic note command bus and financial self-approval bypasses removed. See `docs/security/order-generic-update-boundary.md`.
 - **SEC-05A** — Centralized audit metadata redaction and safe audit read behavior. See `docs/security/audit-redaction.md`.
+- **SEC-05B** — Audit integrity policy, explicit event metadata contracts, and transaction-policy standardization. See `docs/security/audit-integrity-policy.md`.
 - Cursor plugin operating model and security-review templates.
 
 ## In flight (implemented and verified on a branch, not merged)
 
-- **SEC-05B** — Audit integrity policy, explicit event metadata contracts, and
-  transaction-policy standardization. Branch
-  `fix/sec-05b-audit-integrity-policy` (base `main`
-  `f62886916318f1fcf137b2954c88d588fa5f226b`). Central registry, controlled
-  wrappers, free-text reason summarization for high-risk events, and
-  same-transaction required audits for critical mutations. See
-  `docs/security/audit-integrity-policy.md`. Do not mark physical historical
-  scrubbing or cryptographic/tamper-evident auditing complete.
+- **SEC-05C** — Shift-close and required audit atomicity. Branch
+  `fix/sec-05c-shift-close-audit-atomicity` (base `main`
+  `a200cb69b2c3b8192ee6ffd714f11558c1449d93`). Conditional close transition,
+  same-transaction required audit for `SHIFT_CLOSE` / `CLOSE_SHIFT`, rollback
+  and concurrency coverage. See `docs/security/shift-close-audit-atomicity.md`.
 
 ## Next priorities (in order)
 
-1. Remaining SEC-05B follow-ups after merge — shift-close transaction redesign,
-   remaining broad best-effort metadata builders, planned historical physical
-   scrubbing (offline, separately approved).
+1. Remaining audit follow-ups — broad best-effort metadata builders, planned
+   historical physical scrubbing (offline, separately approved).
 2. **SEC-04 (remainder)** — Broader authorization review of remaining order
-   surfaces beyond the generic update path (for example legacy
-   `approvedByUserId` service overloads once callers are gone).
+   surfaces beyond the generic update path.
 3. **P0** — Refund/return/void idempotency.
 4. **P0** — Order state and parent-child invariants.
 5. **P0** — Atomic checkout and stock enforcement.
 6. **P0** — Configured tax and inclusive-tax correctness.
-7. **P0** — Counted shift reconciliation.
+7. **P0** — Counted shift reconciliation (beyond close atomicity).
 8. Production database (PostgreSQL) and deployment hardening.
 9. Frontend contract integration (see deferred list in `CURRENT_STATE.md`).
 
 ## Deferred
 
-- PostgreSQL migration and production deployment hardening (item 8) until P0/security items land.
-- All frontend work, including password-rotation UI, explicit user/manager selection, SEC-02B manager step-up / one-time approval-token UX, and SEC-04A client migration off magic note/financial `updateMeta` fields.
-- SEC-02B dual control (approver distinct from requester); self-approval remains allowed through PIN+grant.
-- SEC-02B strong trusted-terminal binding until a trustworthy end-to-end terminal identity exists (grants remain session/requester bound).
-- PIN recovery, history, uniqueness, expiry, and employee-switching UX (explicitly out of SEC-02A scope).
+- PostgreSQL migration and production deployment hardening until P0/security items land.
+- All frontend work (password-rotation UI, explicit user/manager selection, SEC-02B token UX, SEC-04A client migration).
+- SEC-02B dual control; self-approval remains allowed through PIN+grant.
+- SEC-02B strong trusted-terminal binding.
+- PIN recovery, history, uniqueness, expiry, and employee-switching UX.
 - Terminal-identity binding for terminal-level throttling.
-- Consolidation of dedicated notes vs generic `updateMeta` notes into a single public API surface.
+- Consolidation of dedicated notes vs generic `updateMeta` notes.
 - Physical scrubbing of pre-SEC-05A audit rows; audit encryption/signing/WORM/SIEM.
-- Shift close as transaction-required (requires shift-service redesign).
+- Shift opening as transaction-required (close is SEC-05C).
 
 Do not mark any item complete without a merged implementation and passing gates.

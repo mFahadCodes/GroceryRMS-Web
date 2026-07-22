@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`f628869…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`a200cb69…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -37,19 +37,10 @@ branch are collected under "In-flight decisions" and are not yet binding on main
 - **Read-time defense in depth.** Audit report APIs re-sanitize stored JSON and
   project only safe user fields, protecting historical unsafe rows without
   rewriting the database.
-
-## Money
-
-- Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
-
-## In-flight decisions (branch `fix/sec-05b-audit-integrity-policy`, not merged)
-
-These are implemented and verified on the SEC-05B branch (base `main` `f628869…`)
-and become binding only once merged. See `docs/security/audit-integrity-policy.md`.
-
-- **Central audit event registry.** Every approved action has one mode
-  (`TRANSACTION_REQUIRED`, `BEST_EFFORT`, or `ACCESS_ACTIVITY`); unknown
-  actions fail closed. Callers cannot choose or override mode or entity table.
+- **Central audit event registry** (`docs/security/audit-integrity-policy.md`).
+  Every approved action has one mode (`TRANSACTION_REQUIRED`, `BEST_EFFORT`, or
+  `ACCESS_ACTIVITY`); unknown actions fail closed. Callers cannot choose or
+  override mode or entity table.
 - **Required audits share the mutation transaction.** `writeRequiredAudit`
   rejects the root Prisma client and throws on persistence failure so mutation
   and audit commit or roll back together.
@@ -57,8 +48,25 @@ and become binding only once merged. See `docs/security/audit-integrity-policy.m
   and read/print paths; raw metadata is never logged on failure.
 - **High-risk free-text reasons are summarized**, not stored verbatim, in audit
   metadata (`reasonProvided` / `reasonLength`); business records keep the text.
-- **Shift close remains best effort** until a shift-service transaction redesign
-  lands; physical scrubbing and signing/immutability remain deferred.
+
+## Money
+
+- Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
+
+## In-flight decisions (branch `fix/sec-05c-shift-close-audit-atomicity`, not merged)
+
+These are implemented and verified on the SEC-05C branch (base `main` `a200cb69…`)
+and become binding only once merged. See `docs/security/shift-close-audit-atomicity.md`.
+
+- **Shift close is transaction-required.** Canonical actions `SHIFT_CLOSE` and
+  `CLOSE_SHIFT` mutate the shift and write the required audit in one Prisma
+  interactive transaction.
+- **Conditional close transition.** Closing uses `updateMany` constrained to
+  `endedAt: null` (and ownership) so at most one concurrent close succeeds;
+  losers get the existing already-closed conflict behavior with no success audit.
+- **Safe close audit metadata.** Closing totals and free-text note presence/length
+  may be audited; raw close notes are not. Shift open remains best-effort until a
+  dedicated redesign.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.
