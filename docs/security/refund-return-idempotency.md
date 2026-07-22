@@ -105,7 +105,12 @@ No manager approval applies on these routes.
 
 ## Deferred
 
-- Void idempotency (P0-C2)
+- Void idempotency — **done in P0-C2**
+  (`docs/security/void-idempotency-concurrency.md`)
+- Physical historical return-lineage reconciliation tooling
+- Idempotency row cleanup
+- PostgreSQL production locking verification
+- Discount idempotency
 - Physical historical reconciliation tooling
 - Idempotency row cleanup
 - PostgreSQL production locking verification
