@@ -295,6 +295,34 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/**
+ * Durable financial idempotency (P0-A). Scope uniqueness is a single non-null
+ * `scopeHash` so SQLite cannot admit duplicate NULL terminal scopes. No FKs —
+ * records must not block user/order/session/terminal deletion. Raw keys are
+ * never stored; only SHA-256 digests and safe response snapshots.
+ */
+model IdempotencyRecord {
+  id             Int       @id @default(autoincrement())
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  scopeHash      String    @unique @map("scope_hash")
+  keyDigest      String    @map("key_digest")
+  requestHash    String    @map("request_hash")
+  operation      String
+  resourceType   String    @map("resource_type")
+  resourceId     Int       @map("resource_id")
+  actorUserId    Int       @map("actor_user_id")
+  terminalScope  String    @map("terminal_scope")
+  state          String
+  responseStatus Int?      @map("response_status")
+  responseBody   String?   @map("response_body")
+  completedAt    DateTime? @map("completed_at")
+  expiresAt      DateTime? @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}
+
 // ─── Catalog (Category → ProductCategory, MenuItem → Product) ────────────────
 
 model ProductCategory {
