@@ -4,29 +4,26 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
 
 ## Baseline
 
-- Current `main` hash: `8511945cc5015e13dc6c3332d8431a1ca57c68a4`
-  (merge of PR #12, fix/sec-05c-shift-close-audit-atomicity; includes merged
-  SEC-02B, SEC-04A, SEC-05A, SEC-05B, and SEC-05C)
+- Current `main` hash: `11b1a918a32ca8a453bb2735c089c02faf316172`
+  (merge of PR #13, fix/p0a-checkout-payment-idempotency; includes merged
+  SEC-02B, SEC-04A, SEC-05A, SEC-05B, SEC-05C, and P0-A)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
 ## In-flight (not merged)
 
-- **P0-A** — Durable checkout and payment idempotency. Implemented and verified
-  on branch `fix/p0a-checkout-payment-idempotency` (base `main`
-  `8511945cc5015e13dc6c3332d8431a1ca57c68a4`); not merged. Protects
-  `POST /api/orders/[id]/checkout` and `POST /api/orders/[id]/partial-payment`
-  with durable `Idempotency-Key` records. Full payment exists only inside
-  checkout. See `docs/security/checkout-payment-idempotency.md`.
+- **P0-B** — Order financial concurrency for different-key checkout and
+  partial-payment races. Implemented and verified on branch
+  `fix/p0b-order-financial-concurrency` (base `main`
+  `11b1a918a32ca8a453bb2735c089c02faf316172`); not merged. See
+  `docs/security/order-financial-concurrency.md`.
 
 ## Verified counts
 
-- Prisma migration head (main): `20260723_000000_add_manager_approval_grants`
-- On branch P0-A: migration
-  `20260724_000000_add_financial_idempotency_records` added
-- Test files on main: **75** / tests **861** (zero skipped)
-- Branch totals after full verification: **88 files / 1024 tests**
+- Prisma migration head (main): `20260724_000000_add_financial_idempotency_records`
+- Test files on main: **88** / tests **1024** (zero skipped)
+- Branch totals after P0-B verification: **98 files / 1100 tests**
   (zero skipped, no `.only`)
 - CI: GitHub Actions workflow **"Quality Gates"**
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
@@ -43,6 +40,7 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
 - **SEC-05A** — audit metadata redaction
 - **SEC-05B** — audit integrity policy and transactional required audits
 - **SEC-05C** — shift-close and required audit atomicity
+- **P0-A** — durable checkout and payment idempotency
 - Cursor plugin operating model
 
 ## Backend contracts requiring future frontend changes
@@ -51,17 +49,24 @@ Last updated: 2026-07-22 (verified against the repository, not assumed)
   SEC-04A dedicated order routes (unchanged from prior phases).
 - **P0-A:** checkout and partial-payment clients must send `Idempotency-Key`
   and retry with the same key on lost responses / `IDEMPOTENCY_IN_PROGRESS`.
+- **P0-B:** on `409` order financial conflicts, re-read order state before
+  starting a new attempt with a **new** idempotency key.
 
 ## Current limitations
 
 - Frontend remains incomplete behind backend contracts.
-- P0-A is on a branch, not merged. Refund/return/void idempotency, physical
-  idempotency-record cleanup, remaining SEC-04 work, and other P0 items remain.
-- SQLite only; PostgreSQL deferred.
+- P0-B is on a branch, not merged. Refund/return/void concurrency and
+  idempotency, physical idempotency-record cleanup, remaining SEC-04 work,
+  and other P0 items remain.
+- SQLite only; PostgreSQL deferred. P0-B does not claim PostgreSQL locking
+  has been production-tested.
 - Authoritative terminal binding for idempotency uses session terminal when
   present; otherwise sentinel `t:none`.
+- General order locking / versioning is **not** complete—only checkout and
+  partial-payment financial transitions.
 
 ## Maintenance rule
 
 Update this file in the same branch whenever a merged task changes the
-hash-relevant facts above.
+hash-relevant facts above. While on an unmerged branch, keep recorded `main`
+hash at the approved baseline.
