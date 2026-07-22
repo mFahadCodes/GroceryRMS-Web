@@ -139,9 +139,9 @@ describe("audit policy registry", () => {
     }
   });
 
-  it("preserves historical SHIFT_CLOSE and CLOSE_SHIFT as distinct BEST_EFFORT events", () => {
-    expect(AUDIT_EVENTS.SHIFT_CLOSE.mode).toBe("BEST_EFFORT");
-    expect(AUDIT_EVENTS.CLOSE_SHIFT.mode).toBe("BEST_EFFORT");
+  it("registers historical SHIFT_CLOSE and CLOSE_SHIFT as distinct TRANSACTION_REQUIRED events", () => {
+    expect(AUDIT_EVENTS.SHIFT_CLOSE.mode).toBe("TRANSACTION_REQUIRED");
+    expect(AUDIT_EVENTS.CLOSE_SHIFT.mode).toBe("TRANSACTION_REQUIRED");
     expect(AUDIT_EVENTS.SHIFT_CLOSE.entityTable).toBe("shifts");
     expect(AUDIT_EVENTS.CLOSE_SHIFT.entityTable).toBe("shifts");
   });
