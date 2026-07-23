@@ -84,7 +84,8 @@ describe("manager approval source regression", () => {
     expect(route).toContain("approvalToken: issued.approvalToken");
     expect(route).toMatch(/return ok\(\s*\{[\s\S]*approvalToken: issued\.approvalToken/);
     const discount = read("app/api/orders/[id]/discount/route.ts");
-    expect(discount).toContain("approvalToken: parsed.data.managerApprovalToken");
+    // Discount validates the token only inside original execute (after replay).
+    expect(discount).toContain("approvalToken: tokenParsed.data");
     expect(discount).not.toMatch(/ok\([\s\S]*approvalToken/);
     expect(discount).not.toContain("issued.approvalToken");
     // Void validates the token only inside original execute (after replay resolution).

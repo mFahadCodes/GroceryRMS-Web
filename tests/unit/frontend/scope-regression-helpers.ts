@@ -15,6 +15,19 @@ export type ScopeDetection =
   | { mode: "full-history"; changedFiles: string[] }
   | { mode: "structural"; changedFiles: [] };
 
+/** Archived F1 branch that owns historical changed-path allowlist enforcement. */
+export const F1_SCOPE_BRANCH = "feat/f1-frontend-shell-dashboard";
+
+/**
+ * Archived F1 validation baseline (main tip when F1 diverged). Used only when
+ * historical F1 changed-path enforcement is active — do not advance for
+ * unrelated backend phases.
+ */
+export const F1_SCOPE_BASELINE = "08cb3eeb3bbd7e3a2ac95275012b9cc814167605";
+
+/** Explicit test-only override to force historical F1 changed-path enforcement. */
+export const F1_SCOPE_ENV_OVERRIDE = "GROCERYRMS_ENFORCE_F1_SCOPE";
+
 export const f1SourcePaths = [
   "app/page.tsx",
   "components/layout/dashboard-shell.tsx",
@@ -71,6 +84,57 @@ function splitPaths(output: string) {
     .split(/\r?\n/)
     .map((file) => file.trim().replaceAll("\\", "/"))
     .filter(Boolean);
+}
+
+/**
+ * Resolve the current branch for F1 scope decisions.
+ * Precedence: GITHUB_HEAD_REF → branch-like GITHUB_REF_NAME → local git branch.
+ */
+export type ScopeEnv = Record<string, string | undefined>;
+
+export function resolveCurrentBranchName(
+  options: {
+    env?: ScopeEnv;
+    runGit?: GitRunner;
+  } = {},
+): string | null {
+  const env = options.env ?? (process.env as ScopeEnv);
+  const runGit = options.runGit ?? defaultGitRunner;
+  const headRef = env.GITHUB_HEAD_REF?.trim();
+  if (headRef) return headRef;
+
+  const githubRef = env.GITHUB_REF?.trim();
+  const refName = env.GITHUB_REF_NAME?.trim();
+  if (refName && githubRef?.startsWith("refs/heads/")) {
+    return refName;
+  }
+
+  const local = assertGitSuccess(
+    runGit(["branch", "--show-current"]),
+    "Current branch resolution",
+  );
+  return local.length > 0 ? local : null;
+}
+
+/**
+ * Historical F1 changed-path allowlist runs only for the archived F1 branch
+ * (or an explicit test override). Permanent structural checks are separate.
+ */
+export function shouldEnforceF1ChangedPathScope(
+  options: {
+    env?: ScopeEnv;
+    runGit?: GitRunner;
+    branchName?: string | null;
+  } = {},
+): boolean {
+  const env = options.env ?? (process.env as ScopeEnv);
+  const runGit = options.runGit ?? defaultGitRunner;
+  if (env[F1_SCOPE_ENV_OVERRIDE] === "1") return true;
+  const resolved =
+    options.branchName !== undefined
+      ? options.branchName
+      : resolveCurrentBranchName({ env, runGit });
+  return resolved === F1_SCOPE_BRANCH;
 }
 
 export function detectScopeMode({

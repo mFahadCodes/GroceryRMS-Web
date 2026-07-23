@@ -35,6 +35,10 @@ import {
   claimVoidTransition,
 } from "@/lib/security/void-concurrency";
 import {
+  assertOrderDiscountable,
+  claimDiscountMutation,
+} from "@/lib/security/discount-concurrency";
+import {
   consumeManagerApprovalGrant,
   type ManagerApprovalRequester,
 } from "@/lib/services/manager-approval-service";
@@ -391,38 +395,16 @@ function capOrderDiscountAmount(
   return cappedTotal;
 }
 
-export async function applyOrderDiscount(input: {
-  orderId: number;
-  discountAmount?: bigint;
-  discountPercent?: number;
-  reason?: string | null;
-} & ManagerApprovalInput) {
-  return prisma.$transaction(async (tx) => {
-    let approval: { approverUserId: number | null };
-    if (input.approvalToken !== undefined && input.requester !== undefined) {
-      approval = await consumeManagerApprovalGrant(tx, {
-        requester: input.requester,
-        approvalToken: input.approvalToken,
-        action: "order.discount",
-        resourceType: "order",
-        resourceId: input.orderId,
-      });
-    } else {
-      if (
-        input.approvedByUserId &&
-        !(await hasPermissionInTransaction(
-          tx,
-          input.approvedByUserId,
-          PERMS.APPLY_DISCOUNTS,
-          4,
-        ))
-      ) {
-        throw new ServiceError(
-          "Approver does not have discount permission",
-        );
-      }
-      approval = { approverUserId: input.approvedByUserId ?? null };
-    }
+export async function applyOrderDiscount(
+  input: {
+    orderId: number;
+    discountAmount?: bigint;
+    discountPercent?: number;
+    reason?: string | null;
+  } & ManagerApprovalInput,
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
       include: {
@@ -433,6 +415,13 @@ export async function applyOrderDiscount(input: {
       },
     });
     if (!order) throw new ServiceError("Order not found");
+    assertOrderDiscountable(order.status);
+
+    const prior = {
+      discountAmount: order.discountAmount,
+      taxAmount: order.taxAmount,
+      grandTotal: order.grandTotal,
+    };
 
     const subTotal = order.orderItems.reduce(
       (sum, item) => sum + item.lineTotal,
@@ -460,17 +449,51 @@ export async function applyOrderDiscount(input: {
       adjustment: order.adjustment,
     });
 
-    const updated = await tx.order.update({
+    // Authoritative Open + prior-financial CAS before approval consumption.
+    await claimDiscountMutation(tx, input.orderId, prior, {
+      discountAmount: totals.discountAmount,
+      taxAmount: totals.taxAmount,
+      grandTotal: totals.grandTotal,
+    });
+
+    let approval: { approverUserId: number | null };
+    if (input.approvalToken !== undefined && input.requester !== undefined) {
+      approval = await consumeManagerApprovalGrant(tx, {
+        requester: input.requester,
+        approvalToken: input.approvalToken,
+        action: "order.discount",
+        resourceType: "order",
+        resourceId: input.orderId,
+      });
+    } else {
+      if (
+        input.approvedByUserId &&
+        !(await hasPermissionInTransaction(
+          tx,
+          input.approvedByUserId,
+          PERMS.APPLY_DISCOUNTS,
+          4,
+        ))
+      ) {
+        throw new ServiceError(
+          "Approver does not have discount permission",
+        );
+      }
+      approval = { approverUserId: input.approvedByUserId ?? null };
+    }
+
+    if (approval.approverUserId !== null) {
+      await tx.order.update({
+        where: { id: input.orderId },
+        data: { approvedByUserId: approval.approverUserId },
+      });
+    }
+
+    const updated = await tx.order.findUniqueOrThrow({
       where: { id: input.orderId },
-      data: {
-        discountAmount: totals.discountAmount,
-        taxAmount: totals.taxAmount,
-        grandTotal: totals.grandTotal,
-        approvedByUserId:
-          approval.approverUserId ?? order.approvedByUserId,
-      },
       include: orderInclude,
     });
+
     // SEC-05B: discounts are transaction-required regardless of the approval
     // path used; free-text reasons are summarized, never stored verbatim.
     await writeRequiredAudit(tx, {
@@ -486,7 +509,10 @@ export async function applyOrderDiscount(input: {
       ipAddress: input.auditIpAddress ?? null,
     });
     return updated;
-  });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 type ManagerApprovalInput =

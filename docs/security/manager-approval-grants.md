@@ -178,6 +178,12 @@ its own domain audit entry (`APPLY_ORDER_DISCOUNT`, `VOID_ORDER`) in addition to
 in which a grant is consumed without the corresponding order change, or an order change
 occurs without consuming its grant.
 
+**P0-E:** discount routes require `Idempotency-Key`. Matching completed replay
+resolves **before** manager-approval credential validation and does not consume
+another grant. Original execution still requires a valid one-time
+`managerApprovalToken`. Discount CAS is Open-only (approved pre-payment rule);
+see `docs/security/discount-idempotency-concurrency.md`.
+
 ## Cleanup
 
 `cleanupManagerApprovalGrants` opportunistically deletes grants whose `expiresAt`,

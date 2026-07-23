@@ -78,22 +78,23 @@ branch are collected under "In-flight decisions" and are not yet binding on main
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `feat/p0d-frontend-financial-idempotency`, not merged)
+## In-flight decisions (branch `fix/p0e-discount-idempotency-concurrency`, not merged)
 
-These are implemented on the P0-D branch (base `main` `63eb8d3a…`) and become
-binding only once merged. See `docs/security/frontend-financial-idempotency.md`.
+These are implemented on the P0-E branch (base `main` `83db9fd…`) and become
+binding only once merged. See `docs/security/discount-idempotency-concurrency.md`.
 
-- **Browser financial attempts use Web Crypto keys** (≥128-bit), versioned
-  `sessionStorage` records, and deterministic business fingerprints.
-- **`Idempotency-Key` is injected only by the financial executor**, never by a
-  global `apiFetch` interceptor.
-- **Checkout is the only integrated UI** in P0-D; other financial operations
-  have shared contracts without fabricated screens.
-- **Uncertain responses preserve the same key**; mismatch/expiry never mint a
-  replacement key; changed payloads require explicit abandonment.
-- **No offline queue and no cross-tab coordination** in this phase.
-- Manager credentials never enter attempt storage; void tokens are execution
-  credentials only.
+- **Discount requires `Idempotency-Key` (P0-E).** Operation `order.discount`.
+- **Matching replay resolves before manager-approval credential validation** and
+  does not consume another grant.
+- **Approved business rule:** discounts are pre-payment only —
+  `DISCOUNTABLE_ORDER_STATUSES = ["Open"]`. `PartiallyPaid`, fulfilment-stage,
+  `Closed`, and `Void` orders cannot be repriced through the discount endpoint.
+- **Different-key / cross-op concurrency** uses Open + exact prior
+  `discountAmount` / `taxAmount` / `grandTotal` CAS (no version column).
+- **Sequential replacement remains supported only while Open**, after the
+  client re-reads the latest financial state.
+- **Frontend discount UI remains deferred**; formulas and refund/return rules
+  are unchanged.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.
