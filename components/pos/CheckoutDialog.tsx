@@ -8,6 +8,12 @@ import { formatPKR } from "@/lib/currency";
 import { Receipt } from "@/components/pos/Receipt";
 import type { ReceiptOrder } from "@/components/pos/receipt-types";
 import {
+  abandonCheckoutAttempt,
+  loadCheckoutRecoveryAttempt,
+  submitCheckoutWithIdempotency,
+  type FinancialAttemptRecord,
+} from "@/lib/financial-idempotency";
+import {
   cartTotals,
   useCartStore,
 } from "@/stores/cart.store";
@@ -55,6 +61,7 @@ export function CheckoutDialog({
 
   const receiptRef = useRef<HTMLDivElement>(null);
   const [receiptOrder, setReceiptOrder] = useState<ReceiptOrder | null>(null);
+  const submitLockRef = useRef(false);
 
   const { grandTotal } = useMemo(
     () => cartTotals(items, discountPercent, taxPercent),
@@ -71,6 +78,11 @@ export function CheckoutDialog({
   const [tendered, setTendered] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryAttempt, setRecoveryAttempt] =
+    useState<FinancialAttemptRecord | null>(null);
+  const [reconcileOrder, setReconcileOrder] = useState<ReceiptOrder | null>(
+    null,
+  );
 
   const printReceipt = useReactToPrint({
     contentRef: receiptRef,
@@ -92,6 +104,8 @@ export function CheckoutDialog({
     if (open) {
       setTendered(grandTotal.toString());
       setError(null);
+      setReconcileOrder(null);
+      setRecoveryAttempt(loadCheckoutRecoveryAttempt());
     }
   }, [open, grandTotal]);
 
@@ -127,18 +141,96 @@ export function CheckoutDialog({
     onClose();
   }
 
+  function checkoutFields() {
+    if (terminalId === null || terminalId === undefined) {
+      throw new Error("Terminal is required for checkout");
+    }
+    return {
+      paymentMethodId,
+      tenderedAmount: tenderedBig,
+      terminalId,
+      discountPercent,
+      taxPercent,
+    };
+  }
+
+  async function runProtectedCheckout(orderId: number) {
+    const result = await submitCheckoutWithIdempotency<ReceiptOrder>({
+      orderId,
+      fields: checkoutFields(),
+    });
+
+    if (result.ok) {
+      setRecoveryAttempt(null);
+      setReconcileOrder(null);
+      const closed = result.data;
+      if (!closed?.orderNumber || closed.status !== "Closed") {
+        throw new Error(
+          closed?.orderNumber
+            ? "Checkout did not close the order — sale was not completed"
+            : "Checkout succeeded but order confirmation was missing",
+        );
+      }
+      if (
+        !closed.cashier ||
+        !closed.orderItems?.length ||
+        !closed.payments?.length
+      ) {
+        throw new Error("Checkout response is missing receipt data");
+      }
+      await finalizeSale(closed);
+      return;
+    }
+
+    setRecoveryAttempt(result.attempt ?? loadCheckoutRecoveryAttempt());
+
+    if (result.classification.requiresOrderRefresh) {
+      try {
+        const order = await apiFetch<ReceiptOrder>(`/api/orders/${orderId}`);
+        setReconcileOrder(order);
+        if (order.status === "Closed" && order.orderNumber) {
+          failCheckout(
+            `${result.classification.message} Order #${orderId} is already closed — confirm receipt before starting a new sale.`,
+          );
+          return;
+        }
+      } catch {
+        // Refresh is best-effort; surface the financial classification message.
+      }
+    }
+
+    const suffix = result.attempt
+      ? ` (order #${orderId} — previous attempt retained; retry or abandon)`
+      : orderId
+        ? ` (order #${orderId} may be left open — retry or void it)`
+        : "";
+    failCheckout(`${result.classification.message}${suffix}`);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitLockRef.current || submitting) return;
     if (items.length === 0) return;
     if (!shiftId) {
       failCheckout("Open a shift before checkout");
+      return;
+    }
+    if (terminalId === null || terminalId === undefined) {
+      failCheckout("Terminal is required for checkout");
       return;
     }
     if (tenderedBig < grandTotal) {
       failCheckout("Tendered amount is less than total");
       return;
     }
+    if (recoveryAttempt) {
+      failCheckout(
+        `A previous checkout attempt for order #${recoveryAttempt.resourceId} is still retained. Retry that attempt, refresh order status, or abandon it before starting a new sale.`,
+      );
+      return;
+    }
 
+    submitLockRef.current = true;
     setSubmitting(true);
     setError(null);
 
@@ -175,33 +267,7 @@ export function CheckoutDialog({
         });
       }
 
-      const closed = await apiFetch<ReceiptOrder>(
-        `/api/orders/${order.id}/checkout`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            paymentMethodId,
-            tenderedAmount: tenderedBig.toString(),
-            terminalId,
-            discountPercent,
-            taxPercent,
-          }),
-        },
-      );
-
-      if (!closed?.orderNumber || closed.status !== "Closed") {
-        throw new Error(
-          closed?.orderNumber
-            ? "Checkout did not close the order — sale was not completed"
-            : "Checkout succeeded but order confirmation was missing",
-        );
-      }
-
-      if (!closed.cashier || !closed.orderItems?.length || !closed.payments?.length) {
-        throw new Error("Checkout response is missing receipt data");
-      }
-
-      await finalizeSale(closed);
+      await runProtectedCheckout(order.id);
     } catch (err) {
       const message =
         err instanceof ApiError
@@ -215,8 +281,63 @@ export function CheckoutDialog({
           : message,
       );
     } finally {
+      submitLockRef.current = false;
       setSubmitting(false);
     }
+  }
+
+  async function handleRetryRecovery() {
+    if (!recoveryAttempt || submitLockRef.current || submitting) return;
+    submitLockRef.current = true;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await runProtectedCheckout(recoveryAttempt.resourceId);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Checkout retry failed";
+      failCheckout(
+        `${message} (order #${recoveryAttempt.resourceId} — previous attempt retained; retry or abandon)`,
+      );
+    } finally {
+      submitLockRef.current = false;
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRefreshRecoveryOrder() {
+    if (!recoveryAttempt) return;
+    try {
+      const order = await apiFetch<ReceiptOrder>(
+        `/api/orders/${recoveryAttempt.resourceId}`,
+      );
+      setReconcileOrder(order);
+      if (order.status === "Closed" && order.orderNumber) {
+        abandonCheckoutAttempt(recoveryAttempt.resourceId);
+        setRecoveryAttempt(null);
+        await finalizeSale(order);
+      }
+    } catch (err) {
+      failCheckout(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Failed to refresh order status",
+      );
+    }
+  }
+
+  function handleAbandonRecovery() {
+    if (!recoveryAttempt) return;
+    abandonCheckoutAttempt(recoveryAttempt.resourceId);
+    setRecoveryAttempt(null);
+    setReconcileOrder(null);
+    setError(null);
   }
 
   return (
@@ -229,11 +350,69 @@ export function CheckoutDialog({
 
       {open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
-            <h2 className="text-xl font-semibold">Checkout</h2>
+          <div
+            className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="checkout-dialog-title"
+            aria-busy={submitting}
+          >
+            <h2 id="checkout-dialog-title" className="text-xl font-semibold">
+              Checkout
+            </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Total due: {formatPKR(grandTotal)}
             </p>
+
+            {recoveryAttempt ? (
+              <div
+                className="mt-4 space-y-3 rounded-lg border border-border bg-muted/40 p-3"
+                role="status"
+                aria-live="polite"
+              >
+                <p className="text-sm">
+                  Previous checkout attempt for order #
+                  {recoveryAttempt.resourceId} is retained (
+                  {recoveryAttempt.state}). It will not auto-submit after refresh.
+                  Retry with the same key, refresh order status, or abandon
+                  before starting a new sale.
+                </p>
+                {reconcileOrder ? (
+                  <p className="text-xs text-muted-foreground">
+                    Authoritative status: {reconcileOrder.status}
+                    {reconcileOrder.orderNumber
+                      ? ` · ${reconcileOrder.orderNumber}`
+                      : ""}
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRetryRecovery}
+                    disabled={submitting}
+                    className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                  >
+                    {submitting ? "Processing…" : "Retry retained attempt"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRefreshRecoveryOrder}
+                    disabled={submitting}
+                    className="rounded-lg border border-border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                  >
+                    Refresh order status
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAbandonRecovery}
+                    disabled={submitting}
+                    className="rounded-lg border border-border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                  >
+                    Abandon attempt
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <form onSubmit={handleSubmit} className="mt-4 space-y-4">
               <div>
@@ -243,6 +422,7 @@ export function CheckoutDialog({
                 <select
                   value={paymentMethodId}
                   onChange={(e) => setPaymentMethodId(Number(e.target.value))}
+                  disabled={submitting || Boolean(recoveryAttempt)}
                   className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
                 >
                   {paymentMethods.map((m) => (
@@ -264,6 +444,7 @@ export function CheckoutDialog({
                   onChange={(e) =>
                     setTendered(e.target.value.replace(/\D/g, ""))
                   }
+                  disabled={submitting || Boolean(recoveryAttempt)}
                   className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -279,7 +460,10 @@ export function CheckoutDialog({
               </div>
 
               {error ? (
-                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <p
+                  className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  role="alert"
+                >
                   {error}
                 </p>
               ) : null}
@@ -295,7 +479,8 @@ export function CheckoutDialog({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || Boolean(recoveryAttempt)}
+                  aria-busy={submitting}
                   className="flex-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
                 >
                   {submitting ? "Processing…" : "Complete sale"}

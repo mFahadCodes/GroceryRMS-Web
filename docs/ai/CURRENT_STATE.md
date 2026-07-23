@@ -1,35 +1,30 @@
 # Current State
 
-Last updated: 2026-07-23 (verified against the repository, not assumed)
+Last updated: 2026-07-23 (P0-D branch; verified against the repository)
 
 ## Baseline
 
-- Current `main` hash: `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`
-  (merge of PR #15, fix/p0c1-refund-return-idempotency; includes merged
-  SEC-02B, SEC-04A, SEC-05A, SEC-05B, SEC-05C, P0-A, P0-B, and P0-C1)
+- Approved `main` hash for this branch: `63eb8d3a40ab6f427f72ac54c08e02adba01e535`
+  (merge of PR #17, manager-approval test clock-skew fix; includes merged
+  P0-C2 void idempotency and prior security/P0 phases)
 - Original baseline tag: `groceryrms-web-baseline-2026-07-16`
   → commit `63ee18bd33ab4013821e75899d81fc66d0f827d7`
 - Remote: `https://github.com/mFahadCodes/GroceryRMS-Web.git`
 
 ## In-flight (not merged)
 
-- **P0-C2** — Durable void idempotency and cross-operation concurrency.
-  Implemented and verified on branch
-  `fix/p0c2-void-idempotency-concurrency` (base `main`
-  `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`); not merged. Approved
-  business-rule narrowing: voidable status is only `Open` (unpaid).
-  `PartiallyPaid`/fulfilment/`Closed` are not voidable — use refund/reversal
-  or refund/return as appropriate. Matching replay does not require another
-  approval credential. See `docs/security/void-idempotency-concurrency.md`.
+- **P0-D** — Frontend financial idempotency (narrowed). Branch
+  `feat/p0d-frontend-financial-idempotency`. Shared attempt infrastructure for
+  all five backend financial operations; checkout UI is the only integrated
+  caller. Partial-payment / refund / return / void / manager-approval UIs remain
+  deferred. See `docs/security/frontend-financial-idempotency.md`.
+- Parallel Codex ownership (do not modify): `feat/f1-frontend-shell-dashboard`
+  (shell, sidebar, nav, header, breadcrumbs, dashboard).
 
 ## Verified counts
 
 - Prisma migration head (main): `20260725_000000_add_order_item_return_quantity`
-- Test files on main: **111** / tests **1168** (zero skipped)
-- Branch P0-C2 focused suite: **13** void-* files / **89** tests plus shared
-  manager-approval / idempotency regressions
-- Branch totals after full `npm run test`: **123** files / **1257** tests
-  (zero skipped)
+- Test files on approved main: **124** / tests **1266** (zero skipped)
 - CI: GitHub Actions workflow **"Quality Gates"**
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
 
@@ -48,26 +43,24 @@ Last updated: 2026-07-23 (verified against the repository, not assumed)
 - **P0-A** — durable checkout and payment idempotency
 - **P0-B** — order financial concurrency (different-key checkout/payment)
 - **P0-C1** — refund/return idempotency and quantity CAS
+- **P0-C2** — void idempotency and cross-operation concurrency (merged)
+- Manager-approval test clock determinism (merged)
 - Cursor plugin operating model
 
 ## Backend contracts requiring future frontend changes
 
 - Password rotation, explicit PIN/manager selection, manager approval tokens,
   SEC-04A dedicated order routes (unchanged from prior phases).
-- **P0-A/P0-B:** checkout and partial-payment `Idempotency-Key` + 409 handling.
-- **P0-C1:** refund and return clients must send `Idempotency-Key`; on
-  financial/quantity `409` or `RETURN_HISTORY_RECONCILIATION_REQUIRED`,
-  re-read order state before a new attempt.
-- **P0-C2:** void clients must send `Idempotency-Key`; original execution also
-  needs `managerApprovalToken`. Matching replay does not require another
-  approval credential. On void/financial `409`, re-read order state and use a
-  new key for a new attempt.
+- **P0-D (partial):** checkout now sends `Idempotency-Key` and recovers retained
+  attempts. Remaining financial UIs (partial payment, refund, return, void,
+  manager approval) still need product surfaces before client integration.
 
 ## Current limitations
 
 - Frontend remains incomplete behind backend contracts.
-- P0-C2 is on a branch, not merged. Discount idempotency, physical
-  historical return reconciliation tooling, and idempotency cleanup remain.
+- No offline queue or cross-tab financial-attempt coordination.
+- Discount idempotency, physical historical return reconciliation tooling, and
+  idempotency cleanup remain.
 - SQLite only; PostgreSQL deferred.
 - Legacy null-lineage return rows block further merchandise returns until
   controlled reconciliation (deferred).

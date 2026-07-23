@@ -23,11 +23,11 @@ Last updated: 2026-07-23
 
 ## In flight (implemented and verified on a branch, not merged)
 
-- **P0-C2** — Durable void idempotency and cross-operation concurrency. Branch
-  `fix/p0c2-void-idempotency-concurrency` (base `main`
-  `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`). Approved voidability:
-  `Open` only. No schema migration. See
-  `docs/security/void-idempotency-concurrency.md`.
+- **P0-D** — Frontend financial idempotency (narrowed). Branch
+  `feat/p0d-frontend-financial-idempotency` (base `main`
+  `63eb8d3a40ab6f427f72ac54c08e02adba01e535`). Checkout is the only integrated
+  UI; shared contracts cover all five financial operations. See
+  `docs/security/frontend-financial-idempotency.md`.
 
 ## Next priorities (in order)
 
@@ -40,13 +40,17 @@ Last updated: 2026-07-23
 5. **P0** — Configured tax and inclusive-tax correctness.
 6. **P0** — Counted shift reconciliation (beyond close atomicity).
 7. Production database (PostgreSQL) and deployment hardening.
-8. Frontend contract integration (Idempotency-Key UX and 409 financial-conflict handling).
+8. Remaining frontend financial UIs (partial payment, refund, return, void,
+   manager-approval) using `lib/financial-idempotency`.
 9. Controlled historical return-lineage reconciliation tooling.
 
 ## Deferred
 
 - PostgreSQL migration and production deployment hardening until P0/security items land.
-- All frontend work (password-rotation UI, explicit user/manager selection, SEC-02B token UX, SEC-04A client migration, P0-A/P0-B/P0-C1/P0-C2 key and conflict UX).
+- Frontend screens for partial payment, refund, return, void, and manager approval
+  (P0-D infrastructure only; no placeholder workflows).
+- Password-rotation UI, explicit user/manager selection, and other non-financial
+  frontend contract surfaces.
 - Physical purge of expired idempotency records.
 - SEC-02B dual control; self-approval remains allowed through PIN+grant.
 - SEC-02B strong trusted-terminal binding.
@@ -57,5 +61,6 @@ Last updated: 2026-07-23
 - Shift opening as transaction-required (close is SEC-05C).
 - General order versioning / distributed locks / Redis.
 - Schema `paidAmount` / `version` columns (not required for P0-B/P0-C2).
+- Offline financial queues and cross-tab attempt coordination.
 
 Do not mark any item complete without a merged implementation and passing gates.
