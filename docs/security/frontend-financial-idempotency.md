@@ -28,6 +28,11 @@ financial caller in this phase. Shared contracts and executor support exist for
 `order.partial-payment`, `order.refund`, `order.return`, and `order.void`, but no
 placeholder React screens were added for those workflows.
 
+**P0-E note:** the backend now also protects `order.discount` with durable
+idempotency (Open-only). Frontend discount UI remains absent/deferred; any
+future caller must send and reuse `Idempotency-Key` correctly. Do not assume the
+P0-D frontend registry already includes `order.discount`.
+
 ## Key generation
 
 `createFinancialIdempotencyKey()`:

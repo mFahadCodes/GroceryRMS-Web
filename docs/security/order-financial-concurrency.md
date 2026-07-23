@@ -41,6 +41,11 @@ financial state; a losing transaction rolls back its idempotency reservation.
 There is still no separate full-payment route. Helpers live in
 `lib/security/order-financial-concurrency.ts`.
 
+**P0-E (related):** `PATCH /api/orders/[id]/discount` uses a separate Open-only
++ prior financial-state CAS (`DISCOUNTABLE_ORDER_STATUSES = ["Open"]`). Discount
+must be finalized before payment; see
+`docs/security/discount-idempotency-concurrency.md`.
+
 ## Order as the concurrency boundary
 
 Existing schema fields only (no migration):

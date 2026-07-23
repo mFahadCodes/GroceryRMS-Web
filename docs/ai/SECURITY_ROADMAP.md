@@ -23,11 +23,11 @@ Last updated: 2026-07-23
 
 ## In flight (implemented and verified on a branch, not merged)
 
-- **P0-D** — Frontend financial idempotency (narrowed). Branch
-  `feat/p0d-frontend-financial-idempotency` (base `main`
-  `63eb8d3a40ab6f427f72ac54c08e02adba01e535`). Checkout is the only integrated
-  UI; shared contracts cover all five financial operations. See
-  `docs/security/frontend-financial-idempotency.md`.
+- **P0-E** — Discount idempotency and Open-only concurrency. Branch
+  `fix/p0e-discount-idempotency-concurrency` (base `main`
+  `83db9fd824c6e4ccf580a0b021b50774ea9af62e`). Approved pre-payment discount
+  rule (`DISCOUNTABLE_ORDER_STATUSES = ["Open"]`). Frontend discount UI
+  deferred. See `docs/security/discount-idempotency-concurrency.md`.
 
 ## Next priorities (in order)
 
@@ -35,20 +35,19 @@ Last updated: 2026-07-23
    historical physical scrubbing (offline, separately approved).
 2. **SEC-04 (remainder)** — Broader authorization review of remaining order
    surfaces beyond the generic update path.
-3. Discount idempotency / concurrency (if still required after void).
-4. **P0** — Order state and parent-child invariants.
-5. **P0** — Configured tax and inclusive-tax correctness.
-6. **P0** — Counted shift reconciliation (beyond close atomicity).
-7. Production database (PostgreSQL) and deployment hardening.
-8. Remaining frontend financial UIs (partial payment, refund, return, void,
-   manager-approval) using `lib/financial-idempotency`.
-9. Controlled historical return-lineage reconciliation tooling.
+3. **P0** — Order state and parent-child invariants.
+4. **P0** — Configured tax and inclusive-tax correctness.
+5. **P0** — Counted shift reconciliation (beyond close atomicity).
+6. Production database (PostgreSQL) and deployment hardening.
+7. Remaining frontend financial UIs (partial payment, refund, return, void,
+   discount, manager-approval) using `lib/financial-idempotency`.
+8. Controlled historical return-lineage reconciliation tooling.
 
 ## Deferred
 
 - PostgreSQL migration and production deployment hardening until P0/security items land.
-- Frontend screens for partial payment, refund, return, void, and manager approval
-  (P0-D infrastructure only; no placeholder workflows).
+- Frontend screens for partial payment, refund, return, void, discount, and
+  manager approval (no placeholder workflows).
 - Password-rotation UI, explicit user/manager selection, and other non-financial
   frontend contract surfaces.
 - Physical purge of expired idempotency records.
@@ -60,7 +59,7 @@ Last updated: 2026-07-23
 - Physical scrubbing of pre-SEC-05A audit rows; audit encryption/signing/WORM/SIEM.
 - Shift opening as transaction-required (close is SEC-05C).
 - General order versioning / distributed locks / Redis.
-- Schema `paidAmount` / `version` columns (not required for P0-B/P0-C2).
+- Schema `paidAmount` / `version` columns (not required for P0-B/P0-C2/P0-E).
 - Offline financial queues and cross-tab attempt coordination.
 
 Do not mark any item complete without a merged implementation and passing gates.
