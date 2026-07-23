@@ -7,7 +7,7 @@ import {
   inspectStructuralScope,
 } from "@/tests/unit/frontend/scope-regression-helpers";
 
-const baseline = "63eb8d3a40ab6f427f72ac54c08e02adba01e535";
+const baseline = "08cb3eeb3bbd7e3a2ac95275012b9cc814167605";
 const root = process.cwd();
 const scope = detectScopeMode({ baseline, runGit: defaultGitRunner });
 const changedFiles = scope.changedFiles;
