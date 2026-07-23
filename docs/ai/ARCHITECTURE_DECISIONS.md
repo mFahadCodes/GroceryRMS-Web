@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`a03ae0c…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`63eb8d3a…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -68,27 +68,32 @@ branch are collected under "In-flight decisions" and are not yet binding on main
   is the authoritative quantity CAS counter; `sourceOrderItemId` is lineage only.
   Legacy null-lineage merchandise returns require controlled reconciliation.
   See `docs/security/refund-return-idempotency.md`.
+- **Void requires `Idempotency-Key` (P0-C2).** Operation `order.void`. Matching
+  replay resolves before manager-approval credential validation and does not
+  consume another grant. Exact allowlist CAS (`Open` → `Void`) is the
+  different-key / cross-op void concurrency boundary. See
+  `docs/security/void-idempotency-concurrency.md`.
 
 ## Money
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `fix/p0c2-void-idempotency-concurrency`, not merged)
+## In-flight decisions (branch `feat/p0d-frontend-financial-idempotency`, not merged)
 
-These are implemented and verified on the P0-C2 branch (base `main` `a03ae0c…`)
-and become binding only once merged. See
-`docs/security/void-idempotency-concurrency.md`.
+These are implemented on the P0-D branch (base `main` `63eb8d3a…`) and become
+binding only once merged. See `docs/security/frontend-financial-idempotency.md`.
 
-- **Void requires `Idempotency-Key`** with operation `order.void`.
-- **Replay resolves before manager approval credential validation**; matching
-  replay consumes no grant, does not require a token, and does not re-run void
-  logic. Original execution still requires a valid one-time grant.
-- **Exact void allowlist CAS** (`Open` → `Void`) is the different-key /
-  cross-op void concurrency boundary (approved P0-C2 business rule; no schema
-  change). `PartiallyPaid`, `Closed`, fulfilment statuses, and `Void` are not
-  voidable. Claim runs before approval consumption. Losing requests leave no
-  completed idempotency row and do not consume their approval grant.
-- Discount idempotency remains deferred.
+- **Browser financial attempts use Web Crypto keys** (≥128-bit), versioned
+  `sessionStorage` records, and deterministic business fingerprints.
+- **`Idempotency-Key` is injected only by the financial executor**, never by a
+  global `apiFetch` interceptor.
+- **Checkout is the only integrated UI** in P0-D; other financial operations
+  have shared contracts without fabricated screens.
+- **Uncertain responses preserve the same key**; mismatch/expiry never mint a
+  replacement key; changed payloads require explicit abandonment.
+- **No offline queue and no cross-tab coordination** in this phase.
+- Manager credentials never enter attempt storage; void tokens are execution
+  credentials only.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.
