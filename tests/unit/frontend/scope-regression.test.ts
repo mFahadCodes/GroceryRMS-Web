@@ -1,24 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import {
+  defaultGitRunner,
+  detectScopeMode,
+  inspectStructuralScope,
+} from "@/tests/unit/frontend/scope-regression-helpers";
 
 const baseline = "63eb8d3a40ab6f427f72ac54c08e02adba01e535";
 const root = process.cwd();
-const trackedChanges = execFileSync(
-  "git",
-  ["diff", "--name-only", baseline],
-  { cwd: root, encoding: "utf8" },
-);
-const untrackedChanges = execFileSync(
-  "git",
-  ["ls-files", "--others", "--exclude-standard"],
-  { cwd: root, encoding: "utf8" },
-);
-const changedFiles = `${trackedChanges}\n${untrackedChanges}`
-  .split(/\r?\n/)
-  .filter(Boolean)
-  .map((file) => file.replaceAll("\\", "/"));
+const scope = detectScopeMode({ baseline, runGit: defaultGitRunner });
+const changedFiles = scope.changedFiles;
+const structuralViolations = inspectStructuralScope({ root });
 
 function read(relativePath: string) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -33,6 +26,10 @@ function dashboardProductionSource() {
 }
 
 describe("F1 frontend scope regression", () => {
+  it("passes deterministic structural invariants in every Git mode", () => {
+    expect(structuralViolations).toEqual([]);
+  });
+
   it("does not change checkout or another POS workflow file", () => {
     expect(
       changedFiles.some(

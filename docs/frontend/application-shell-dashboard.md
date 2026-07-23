@@ -158,6 +158,15 @@ idempotency, manager-approval attempt handling, backend API routes, backend
 services, Prisma files, packages, lockfiles, `docs/security/**`, or `docs/ai/**`.
 Those areas remain owned by the parallel financial-integration branch.
 
+The source-regression suite uses two fail-closed verification modes. In a normal
+full-history repository, it confirms the approved baseline commit exists and
+checks changed paths with a merge-base diff from that baseline to `HEAD`. In a
+shallow CI checkout where that object is genuinely unavailable, it first proves
+the repository is shallow and then inspects the complete expected F1 source set
+for financial UI coupling, mutations, backend or Prisma imports, global request
+interception, idempotency injection, fake metrics, random identifiers, and P0-D
+internals. The structural fallback does not claim historical diff coverage.
+
 ## Deferred frontend areas
 
 - Password-rotation and explicit PIN-user selection UI remain deferred.
