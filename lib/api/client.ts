@@ -4,13 +4,20 @@ type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly code?: string;
   readonly details?: unknown;
 
-  constructor(message: string, status: number, details?: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    details?: unknown,
+    code?: string,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.details = details;
+    this.code = code;
   }
 }
 
@@ -54,10 +61,18 @@ export async function apiFetch<T>(
   const body = json as ApiResponse<T>;
 
   if (!res.ok || !body.success) {
+    const code =
+      json &&
+      typeof json === "object" &&
+      "code" in json &&
+      typeof (json as { code: unknown }).code === "string"
+        ? (json as { code: string }).code
+        : undefined;
     throw new ApiError(
       parseErrorMessage(json, res.status),
       res.status,
       "details" in body ? body.details : undefined,
+      code,
     );
   }
 
