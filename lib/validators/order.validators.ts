@@ -178,11 +178,25 @@ export const checkoutSchema = z.object({
     .optional(),
 });
 
-export const voidOrderSchema = z.object({
-  reason: z.string().min(1),
-  managerApprovalToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  reverseStock: z.boolean().default(false),
-}).strict();
+export const voidOrderBusinessSchema = z
+  .object({
+    reason: z.string().min(1),
+    reverseStock: z.boolean().default(false),
+  })
+  .strict();
+
+export const voidManagerApprovalTokenSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{43}$/);
+
+/** Original-execution body contract (tests / transport discovery). */
+export const voidOrderSchema = z
+  .object({
+    reason: z.string().min(1),
+    managerApprovalToken: voidManagerApprovalTokenSchema,
+    reverseStock: z.boolean().default(false),
+  })
+  .strict();
 
 export const holdOrderSchema = z.object({
   notes: z.string().optional().nullable(),

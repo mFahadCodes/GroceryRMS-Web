@@ -1,6 +1,6 @@
 # Security and Integrity Roadmap
 
-Last updated: 2026-07-22
+Last updated: 2026-07-23
 
 ## Completed (verified on main)
 
@@ -17,15 +17,17 @@ Last updated: 2026-07-22
 - **P0-A** — Durable checkout and payment idempotency. See `docs/security/checkout-payment-idempotency.md`.
 - **P0-B** — Order financial concurrency for different-key checkout and
   partial payment. See `docs/security/order-financial-concurrency.md`.
+- **P0-C1** — Refund/return idempotency, monetary remaining, and source-line
+  quantity CAS. See `docs/security/refund-return-idempotency.md`.
 - Cursor plugin operating model and security-review templates.
 
 ## In flight (implemented and verified on a branch, not merged)
 
-- **P0-C1** — Durable refund/return idempotency and different-key monetary /
-  quantity concurrency. Branch `fix/p0c1-refund-return-idempotency` (base
-  `main` `e9507bb38a6ace597900793a83537eb0f19162df`). Approved additive
-  migration for `returnedQuantity` + `sourceOrderItemId`. See
-  `docs/security/refund-return-idempotency.md`.
+- **P0-C2** — Durable void idempotency and cross-operation concurrency. Branch
+  `fix/p0c2-void-idempotency-concurrency` (base `main`
+  `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`). Approved voidability:
+  `Open` only. No schema migration. See
+  `docs/security/void-idempotency-concurrency.md`.
 
 ## Next priorities (in order)
 
@@ -33,7 +35,7 @@ Last updated: 2026-07-22
    historical physical scrubbing (offline, separately approved).
 2. **SEC-04 (remainder)** — Broader authorization review of remaining order
    surfaces beyond the generic update path.
-3. **P0-C2** — Void idempotency and concurrency.
+3. Discount idempotency / concurrency (if still required after void).
 4. **P0** — Order state and parent-child invariants.
 5. **P0** — Configured tax and inclusive-tax correctness.
 6. **P0** — Counted shift reconciliation (beyond close atomicity).
@@ -44,7 +46,7 @@ Last updated: 2026-07-22
 ## Deferred
 
 - PostgreSQL migration and production deployment hardening until P0/security items land.
-- All frontend work (password-rotation UI, explicit user/manager selection, SEC-02B token UX, SEC-04A client migration, P0-A/P0-B key and conflict UX).
+- All frontend work (password-rotation UI, explicit user/manager selection, SEC-02B token UX, SEC-04A client migration, P0-A/P0-B/P0-C1/P0-C2 key and conflict UX).
 - Physical purge of expired idempotency records.
 - SEC-02B dual control; self-approval remains allowed through PIN+grant.
 - SEC-02B strong trusted-terminal binding.
@@ -54,6 +56,6 @@ Last updated: 2026-07-22
 - Physical scrubbing of pre-SEC-05A audit rows; audit encryption/signing/WORM/SIEM.
 - Shift opening as transaction-required (close is SEC-05C).
 - General order versioning / distributed locks / Redis.
-- Schema `paidAmount` / `version` columns (not required for P0-B).
+- Schema `paidAmount` / `version` columns (not required for P0-B/P0-C2).
 
 Do not mark any item complete without a merged implementation and passing gates.

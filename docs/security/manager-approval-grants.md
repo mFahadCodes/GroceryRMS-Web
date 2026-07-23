@@ -213,6 +213,13 @@ The frontend does not yet exercise this contract and must be updated:
   `POST /api/auth/manager-approvals` for the exact action and order.
 - Capture the one-time `approvalToken` in memory only, never persist or log it, and
   attach it as `managerApprovalToken` to the immediately following discount/void call.
+- For void (P0-C2), also send `Idempotency-Key`. Matching same-key void replay
+  does **not** consume another grant and does **not** require
+  `managerApprovalToken` (including when the field is omitted or an unusable
+  value is supplied). Original execution still requires a valid one-time
+  token. Voidable status is only `Open` (approved P0-C2 business-rule change).
+  `PartiallyPaid` orders are not voidable. See
+  `docs/security/void-idempotency-concurrency.md`.
 - Handle the stable error codes above, including the 120-second expiry (re-request on
   `MANAGER_APPROVAL_EXPIRED`), single-use `MANAGER_APPROVAL_ALREADY_USED`, and
   `Retry-After` on throttling.

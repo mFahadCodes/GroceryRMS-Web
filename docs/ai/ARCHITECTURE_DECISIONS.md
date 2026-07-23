@@ -1,7 +1,7 @@
 # Architecture Decisions
 
 Decisions below are proven by current source, migrations, and tests on main
-(`e9507bb…`). They are constraints, not suggestions. Decisions still on an unmerged
+(`a03ae0c…`). They are constraints, not suggestions. Decisions still on an unmerged
 branch are collected under "In-flight decisions" and are not yet binding on main.
 
 ## Repository and process
@@ -64,26 +64,31 @@ branch are collected under "In-flight decisions" and are not yet binding on main
   in-transaction payment-sum remaining checks. Losing different-key requests
   create no payment, stock effect, success audit, or completed idempotency
   record. See `docs/security/order-financial-concurrency.md`.
+- **Refund and return require `Idempotency-Key` (P0-C1).** `OrderItem.returnedQuantity`
+  is the authoritative quantity CAS counter; `sourceOrderItemId` is lineage only.
+  Legacy null-lineage merchandise returns require controlled reconciliation.
+  See `docs/security/refund-return-idempotency.md`.
 
 ## Money
 
 - Amounts are **BigInt paisa** (integer, 1 PKR = 100 paisa) in the database and string paisa in API responses (`lib/paisa-math.ts`, `lib/api/serialize.ts`).
 
-## In-flight decisions (branch `fix/p0c1-refund-return-idempotency`, not merged)
+## In-flight decisions (branch `fix/p0c2-void-idempotency-concurrency`, not merged)
 
-These are implemented and verified on the P0-C1 branch (base `main` `e9507bb…`)
+These are implemented and verified on the P0-C2 branch (base `main` `a03ae0c…`)
 and become binding only once merged. See
-`docs/security/refund-return-idempotency.md`.
+`docs/security/void-idempotency-concurrency.md`.
 
-- **Refund and return require `Idempotency-Key`** with operations `order.refund`
-  and `order.return`.
-- **`OrderItem.returnedQuantity` is the authoritative quantity CAS counter**;
-  `sourceOrderItemId` is lineage only (`onDelete: SetNull`).
-- **Legacy null-lineage merchandise return rows** are not backfilled; further
-  merchandise returns on affected orders are blocked until controlled
-  reconciliation.
-- **Monetary remaining** for refund/return-with-refund uses in-transaction
-  child Refund order aggregates. Void idempotency remains deferred (P0-C2).
+- **Void requires `Idempotency-Key`** with operation `order.void`.
+- **Replay resolves before manager approval credential validation**; matching
+  replay consumes no grant, does not require a token, and does not re-run void
+  logic. Original execution still requires a valid one-time grant.
+- **Exact void allowlist CAS** (`Open` → `Void`) is the different-key /
+  cross-op void concurrency boundary (approved P0-C2 business rule; no schema
+  change). `PartiallyPaid`, `Closed`, fulfilment statuses, and `Void` are not
+  voidable. Claim runs before approval consumption. Losing requests leave no
+  completed idempotency row and do not consume their approval grant.
+- Discount idempotency remains deferred.
 
 Do not add speculative future decisions here; record a decision as binding on main only
 after it is implemented and merged.

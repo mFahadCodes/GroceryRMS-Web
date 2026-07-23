@@ -121,9 +121,12 @@ unchanged. No frontend changes. No schema or dependency changes.
 
 ## Deferred
 
-- Void / discount concurrency and idempotency
+- Void / discount concurrency and idempotency — void **done in P0-C2**
+  (`docs/security/void-idempotency-concurrency.md`); voidable status is only
+  `Open` (approved business-rule change). `PartiallyPaid` is not voidable.
+  Discount remains deferred
 - Physical historical return-lineage reconciliation tooling
-- General order locking beyond protected checkout/payment/refund/return paths
+- General order locking beyond protected checkout/payment/refund/return/void paths
 - Redis / queues / distributed locks
 - PostgreSQL production locking verification
 

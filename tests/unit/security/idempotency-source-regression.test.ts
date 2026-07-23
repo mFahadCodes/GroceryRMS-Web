@@ -115,12 +115,13 @@ describe("idempotency source regression: route wiring", () => {
 });
 
 describe("idempotency source regression: operation registry and metadata safety", () => {
-  it("registers checkout, partial-payment, refund, and return as financial idempotency operations", () => {
+  it("registers checkout, partial-payment, refund, return, and void as financial idempotency operations", () => {
     expect(FINANCIAL_IDEMPOTENCY_OPERATIONS).toEqual([
       "order.checkout",
       "order.partial-payment",
       "order.refund",
       "order.return",
+      "order.void",
     ]);
   });
 

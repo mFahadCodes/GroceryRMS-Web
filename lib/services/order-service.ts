@@ -31,6 +31,10 @@ import {
   sumCommittedRefundAbsolute,
 } from "@/lib/security/refund-return-concurrency";
 import {
+  assertOrderVoidable,
+  claimVoidTransition,
+} from "@/lib/security/void-concurrency";
+import {
   consumeManagerApprovalGrant,
   type ManagerApprovalRequester,
 } from "@/lib/services/manager-approval-service";
@@ -227,12 +231,32 @@ export async function addItemToOrder(input: {
   });
 }
 
-export async function voidOrder(input: {
-  orderId: number;
-  reason: string;
-  reverseStock?: boolean;
-} & ManagerApprovalInput) {
-  return prisma.$transaction(async (tx) => {
+export async function voidOrder(
+  input: {
+    orderId: number;
+    reason: string;
+    reverseStock?: boolean;
+  } & ManagerApprovalInput,
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: { orderItems: true, payments: true },
+    });
+    if (!order) throw new ServiceError("Order not found");
+    assertOrderVoidable(order.status);
+
+    // Authoritative CAS first — same allowlist as assertOrderVoidable.
+    // Do not consume approval or apply void effects before the claim succeeds.
+    await claimVoidTransition(tx, input.orderId, {
+      voidReason: input.reason,
+      approvedByUserId:
+        input.approvalToken !== undefined
+          ? null
+          : (input.approvedByUserId ?? null),
+    });
+
     const approval =
       input.approvalToken !== undefined && input.requester !== undefined
         ? await consumeManagerApprovalGrant(tx, {
@@ -243,11 +267,20 @@ export async function voidOrder(input: {
             resourceId: input.orderId,
           })
         : { approverUserId: input.approvedByUserId ?? null };
-    const order = await tx.order.findUnique({
+
+    if (approval.approverUserId !== null) {
+      await tx.order.update({
+        where: { id: input.orderId },
+        data: { approvedByUserId: approval.approverUserId },
+      });
+    }
+
+    // Re-read committed line/payment state after the claim (no stale pre-claim data
+    // for subsequent effects). Existing void behavior does not reverse payments.
+    const claimedOrder = await tx.order.findUniqueOrThrow({
       where: { id: input.orderId },
       include: { orderItems: true, payments: true },
     });
-    if (!order) throw new ServiceError("Order not found");
 
     await tx.orderItem.updateMany({
       where: { orderId: input.orderId, status: { not: "Void" } },
@@ -255,7 +288,8 @@ export async function voidOrder(input: {
     });
 
     if (input.reverseStock ?? false) {
-      for (const item of order.orderItems) {
+      for (const item of claimedOrder.orderItems) {
+        if (item.status === "Void") continue;
         const qty =
           item.weightKg !== null
             ? new Prisma.Decimal(item.weightKg.toString())
@@ -270,21 +304,16 @@ export async function voidOrder(input: {
             type: "Return",
             quantity: qty,
             costAmount: item.unitPrice,
-            reference: order.orderNumber,
-            notes: `Stock reversal for void (${order.orderNumber})`,
+            reference: claimedOrder.orderNumber,
+            notes: `Stock reversal for void (${claimedOrder.orderNumber})`,
             userId: approval.approverUserId,
           },
         });
       }
     }
 
-    const updated = await tx.order.update({
+    const updated = await tx.order.findUniqueOrThrow({
       where: { id: input.orderId },
-      data: {
-        status: "Void",
-        voidReason: input.reason,
-        approvedByUserId: approval.approverUserId,
-      },
       include: orderInclude,
     });
 
@@ -304,7 +333,10 @@ export async function voidOrder(input: {
     });
 
     return updated;
-  });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 export async function holdOrder(orderId: number, notes?: string | null) {
