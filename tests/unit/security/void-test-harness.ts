@@ -11,6 +11,7 @@ import {
 import {
   deterministicApprovalToken,
   insertGrant,
+  installManagerApprovalTestClock,
   seedManagerApprovalFixture,
   VOID_PERM,
 } from "./manager-approval-test-database";
@@ -21,6 +22,11 @@ export {
   IDEMPOTENCY_TEST_KEY_B,
   deterministicApprovalToken,
 };
+
+// Void paths call consumeManagerApprovalGrant without an injected `now`. Keep
+// Date aligned with grant defaults for every suite that imports this harness.
+installManagerApprovalTestClock();
+
 
 export async function resetIdempotencyTables(client: PrismaClient) {
   await resetFinancialTables(client);

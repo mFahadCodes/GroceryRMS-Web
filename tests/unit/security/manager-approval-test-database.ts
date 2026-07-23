@@ -3,6 +3,7 @@ import path from "node:path";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "@prisma/client";
 import Database from "better-sqlite3";
+import { afterEach, beforeEach, vi } from "vitest";
 import { PERMS } from "@/lib/api/permissions";
 import {
   digestManagerApprovalToken,
@@ -21,11 +22,51 @@ export const managerApprovalMigrationPaths = [
   "prisma/migrations/20260725_000000_add_order_item_return_quantity/migration.sql",
 ];
 
+/**
+ * Deterministic reference instant for manager-approval / void tests.
+ * Suites that call production paths using wall-clock `new Date()` must install
+ * {@link installManagerApprovalTestClock} so issuance and consumption share this
+ * instant. Do not treat this calendar value as a permanently valid grant clock
+ * without installing the Date-only fake clock.
+ */
 export const MANAGER_APPROVAL_NOW = new Date("2026-07-23T12:00:00.000Z");
-export const SESSION_EXPIRES_AT = new Date("2026-07-24T12:00:00.000Z");
+export const SESSION_EXPIRES_AT = new Date(
+  MANAGER_APPROVAL_NOW.getTime() + 24 * 60 * 60 * 1000,
+);
 export const REQUESTER_SESSION_ID = "mgr_approval_req_session_abcdefgh";
 export const DISCOUNT_PERM = PERMS.APPLY_DISCOUNTS;
 export const VOID_PERM = PERMS.VOID_ORDERS;
+
+/** Valid grant expiry relative to an issuance instant (default: current Date). */
+export function validGrantExpiresAt(from: Date = new Date()): Date {
+  return new Date(from.getTime() + MANAGER_APPROVAL_LIFETIME_MS);
+}
+
+/** Instant at which a grant issued at `from` becomes expired (inclusive boundary). */
+export function grantExpiryBoundary(from: Date = new Date()): Date {
+  return new Date(from.getTime() + MANAGER_APPROVAL_LIFETIME_MS);
+}
+
+/** Instant just before the 120s expiry boundary. */
+export function justBeforeGrantExpiry(from: Date = new Date()): Date {
+  return new Date(from.getTime() + MANAGER_APPROVAL_LIFETIME_MS - 1);
+}
+
+/**
+ * Align `Date` / `Date.now()` with {@link MANAGER_APPROVAL_NOW} without faking
+ * setTimeout/Promise scheduling (safe for Prisma + concurrency tests).
+ */
+export function installManagerApprovalTestClock(
+  instant: Date = MANAGER_APPROVAL_NOW,
+) {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(instant);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+}
 
 export function createManagerApprovalTestDatabase(name: string) {
   const databasePath = path.resolve(`.tmp/${name}.test.db`);
@@ -253,12 +294,12 @@ export async function insertGrant(
       requiredPermission: input.requiredPermission ?? DISCOUNT_PERM,
       requiredAccessLevel: input.requiredAccessLevel ?? 4,
       terminalId: input.terminalId === undefined ? 1 : input.terminalId,
-      expiresAt:
-        input.expiresAt ??
-        new Date(MANAGER_APPROVAL_NOW.getTime() + MANAGER_APPROVAL_LIFETIME_MS),
+      // Defaults track the active test clock (`new Date()`), not a frozen calendar
+      // literal — installManagerApprovalTestClock aligns this with consume().
+      expiresAt: input.expiresAt ?? validGrantExpiresAt(),
       consumedAt: input.consumedAt ?? null,
       revokedAt: input.revokedAt ?? null,
-      createdAt: input.createdAt ?? MANAGER_APPROVAL_NOW,
+      createdAt: input.createdAt ?? new Date(),
     },
   });
 }
