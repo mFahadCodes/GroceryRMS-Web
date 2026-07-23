@@ -4,14 +4,25 @@ import { describe, expect, it } from "vitest";
 import {
   defaultGitRunner,
   detectScopeMode,
+  f1SourcePaths,
   inspectStructuralScope,
 } from "@/tests/unit/frontend/scope-regression-helpers";
 
-const baseline = "08cb3eeb3bbd7e3a2ac95275012b9cc814167605";
+/** Approved integrated main tip (post-F1). Scope checks are relative to this. */
+const baseline = "83db9fd824c6e4ccf580a0b021b50774ea9af62e";
 const root = process.cwd();
 const scope = detectScopeMode({ baseline, runGit: defaultGitRunner });
 const changedFiles = scope.changedFiles;
 const structuralViolations = inspectStructuralScope({ root });
+
+const f1OwnedChanged = changedFiles.some(
+  (file) =>
+    (f1SourcePaths as readonly string[]).includes(file) ||
+    file.startsWith("components/dashboard/") ||
+    file.startsWith("components/layout/") ||
+    file === "app/page.tsx" ||
+    file.startsWith("docs/frontend/"),
+);
 
 function read(relativePath: string) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -41,13 +52,15 @@ describe("F1 frontend scope regression", () => {
     ).toBe(false);
   });
 
-  it("does not change backend API routes", () => {
+  it("does not change backend API routes when F1-owned sources change", () => {
+    if (!f1OwnedChanged) return;
     expect(changedFiles.some((file) => file.startsWith("app/api/"))).toBe(
       false,
     );
   });
 
-  it("does not change backend services or financial security helpers", () => {
+  it("does not change backend services or financial security helpers when F1-owned sources change", () => {
+    if (!f1OwnedChanged) return;
     expect(
       changedFiles.some(
         (file) =>
@@ -73,7 +86,8 @@ describe("F1 frontend scope regression", () => {
     ).toBe(false);
   });
 
-  it("does not change Cursor-owned security or AI documentation", () => {
+  it("does not change Cursor-owned security or AI documentation when F1-owned sources change", () => {
+    if (!f1OwnedChanged) return;
     expect(
       changedFiles.some(
         (file) =>

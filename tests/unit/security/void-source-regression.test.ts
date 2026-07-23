@@ -151,13 +151,14 @@ describe("void source regression", () => {
     expect(MANAGER_APPROVAL_ACTIONS).toContain("order.void");
   });
 
-  it("preserves prior financial operations unchanged", () => {
+  it("preserves prior financial operations and registers order.discount", () => {
     expect(FINANCIAL_IDEMPOTENCY_OPERATIONS).toEqual([
       "order.checkout",
       "order.partial-payment",
       "order.refund",
       "order.return",
       "order.void",
+      "order.discount",
     ]);
   });
 
