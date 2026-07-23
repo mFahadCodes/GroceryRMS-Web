@@ -229,11 +229,29 @@ export const patchOrderItemBodySchema = z.object({
   voidReason: z.string().optional().nullable(),
 });
 
+export const applyOrderDiscountBusinessSchema = z
+  .object({
+    discountAmount: paisaSchema.optional(),
+    discountPercent: z.number().min(0).max(100).optional(),
+    reason: z.string().optional().nullable(),
+  })
+  .strict()
+  .refine(
+    (data) =>
+      data.discountAmount !== undefined || data.discountPercent !== undefined,
+    { message: "Either discountAmount or discountPercent is required" },
+  );
+
+export const applyOrderDiscountManagerApprovalTokenSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{43}$/);
+
+/** Original-execution body contract (tests / transport discovery). */
 export const applyOrderDiscountSchema = z
   .object({
     discountAmount: paisaSchema.optional(),
     discountPercent: z.number().min(0).max(100).optional(),
-    managerApprovalToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    managerApprovalToken: applyOrderDiscountManagerApprovalTokenSchema,
     reason: z.string().optional().nullable(),
   })
   .strict()
