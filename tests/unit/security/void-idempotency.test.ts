@@ -1,4 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { ServiceError } from "@/lib/api/service-error";
+import { ORDER_NOT_VOIDABLE } from "@/lib/security/void-concurrency";
 import { IdempotencyConflictError } from "@/lib/services/idempotency-service";
 import {
   countAudits,
@@ -135,9 +137,9 @@ describe("void idempotency", () => {
       }),
     ).rejects.toSatisfy((error: unknown) => {
       return (
-        error instanceof Error &&
-        (error.message.includes("already voided") ||
-          error.message.includes("void conflict"))
+        error instanceof ServiceError &&
+        error.code === ORDER_NOT_VOIDABLE &&
+        error.status === 409
       );
     });
     await expect(countIdempotencyRecords(database.client)).resolves.toBe(1);
@@ -159,15 +161,24 @@ describe("void idempotency", () => {
     expect(order.status).toBe("Void");
   });
 
-  it("voids Closed orders under current eligibility", async () => {
+  it("rejects Closed orders under the approved Open|PartiallyPaid allowlist", async () => {
     const fixture = await seedVoidableOrderFixture(database.client, {
       status: "Closed",
     });
-    const { token } = await issueVoidGrant(database.client, fixture, 11);
-    await runVoidIdempotent(database.client, fixture, { token });
+    const { token, grant } = await issueVoidGrant(database.client, fixture, 11);
+    await expect(
+      runVoidIdempotent(database.client, fixture, { token }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ServiceError && error.code === ORDER_NOT_VOIDABLE,
+    );
     const order = await database.client.order.findUniqueOrThrow({
       where: { id: fixture.order.id },
     });
-    expect(order.status).toBe("Void");
+    expect(order.status).toBe("Closed");
+    const storedGrant = await database.client.managerApprovalGrant.findUniqueOrThrow({
+      where: { id: grant.id },
+    });
+    expect(storedGrant.consumedAt).toBeNull();
   });
 });

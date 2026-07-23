@@ -83,12 +83,15 @@ describe("manager approval source regression", () => {
     const route = read("app/api/auth/manager-approvals/route.ts");
     expect(route).toContain("approvalToken: issued.approvalToken");
     expect(route).toMatch(/return ok\(\s*\{[\s\S]*approvalToken: issued\.approvalToken/);
-    for (const file of convertedRoutes) {
-      const source = read(file);
-      expect(source).toContain("approvalToken: parsed.data.managerApprovalToken");
-      expect(source).not.toMatch(/ok\([\s\S]*approvalToken/);
-      expect(source).not.toContain("issued.approvalToken");
-    }
+    const discount = read("app/api/orders/[id]/discount/route.ts");
+    expect(discount).toContain("approvalToken: parsed.data.managerApprovalToken");
+    expect(discount).not.toMatch(/ok\([\s\S]*approvalToken/);
+    expect(discount).not.toContain("issued.approvalToken");
+    // Void validates the token only inside original execute (after replay resolution).
+    const voidRoute = read("app/api/orders/[id]/void/route.ts");
+    expect(voidRoute).toContain("approvalToken: tokenParsed.data");
+    expect(voidRoute).not.toMatch(/ok\([\s\S]*approvalToken/);
+    expect(voidRoute).not.toContain("issued.approvalToken");
   });
 
   it("stores digest fields rather than raw tokens in the Prisma grant model", () => {

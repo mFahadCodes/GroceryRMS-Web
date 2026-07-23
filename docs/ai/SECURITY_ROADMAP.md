@@ -25,7 +25,8 @@ Last updated: 2026-07-23
 
 - **P0-C2** — Durable void idempotency and cross-operation concurrency. Branch
   `fix/p0c2-void-idempotency-concurrency` (base `main`
-  `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`). No schema migration. See
+  `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`). Approved voidability:
+  `Open` | `PartiallyPaid` only. No schema migration. See
   `docs/security/void-idempotency-concurrency.md`.
 
 ## Next priorities (in order)

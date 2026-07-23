@@ -7,7 +7,10 @@ import { fail, ok, okFromStoredEnvelope } from "@/lib/api-response";
 import { ManagerApprovalServiceError } from "@/lib/services/manager-approval-service";
 import { voidOrder } from "@/lib/services/order-service";
 import { ServiceError } from "@/lib/api/service-error";
-import { voidOrderSchema } from "@/lib/validators/order.validators";
+import {
+  voidOrderBusinessSchema,
+  voidManagerApprovalTokenSchema,
+} from "@/lib/validators/order.validators";
 import { resolveClientIp } from "@/lib/client-ip";
 import { parseIdempotencyKey } from "@/lib/security/idempotency";
 import {
@@ -38,16 +41,22 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (Number.isNaN(orderId)) return fail("Invalid order id", "INVALID_ORDER_ID", 400);
 
   const body = await parseJsonBody<unknown>(request);
-  const parsed = voidOrderSchema.safeParse(body);
-  if (!parsed.success) {
-    return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
+  const businessFields = extractVoidBusinessFields(body);
+  const businessParsed = voidOrderBusinessSchema.safeParse(businessFields);
+  if (!businessParsed.success) {
+    return fail(
+      "Invalid request body",
+      "VALIDATION_ERROR",
+      400,
+      businessParsed.error.flatten(),
+    );
   }
 
-  // Business DTO only — managerApprovalToken is an execution credential, not payload.
+  // Business DTO only — managerApprovalToken is never hashed or stored.
   const requestPayload = {
     orderId,
-    reason: parsed.data.reason,
-    reverseStock: parsed.data.reverseStock ?? false,
+    reason: businessParsed.data.reason,
+    reverseStock: businessParsed.data.reverseStock,
   };
 
   try {
@@ -60,11 +69,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
       authoritativeTerminalId: auth.session.authoritative.terminalId,
       requestPayload,
       execute: async (tx) => {
+        // Original execution only — matching replay never enters execute.
+        const tokenParsed = voidManagerApprovalTokenSchema.safeParse(
+          extractManagerApprovalToken(body),
+        );
+        if (!tokenParsed.success) {
+          throw new ServiceError(
+            "Manager approval token is required",
+            "VALIDATION_ERROR",
+            400,
+          );
+        }
+
         const voided = await voidOrder(
           {
             orderId,
-            reason: parsed.data.reason,
-            approvalToken: parsed.data.managerApprovalToken,
+            reason: businessParsed.data.reason,
+            approvalToken: tokenParsed.data,
             requester: {
               userId: auth.session.user.id,
               sessionId: auth.session.authoritative!.sessionId,
@@ -72,7 +93,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               terminalId: auth.session.authoritative!.terminalId,
               permissions: auth.session.user.permissions,
             },
-            reverseStock: parsed.data.reverseStock ?? false,
+            reverseStock: businessParsed.data.reverseStock,
             auditIpAddress: resolveClientIp(request),
           },
           tx,
@@ -107,6 +128,27 @@ export async function POST(request: NextRequest, context: RouteContext) {
       400,
     );
   }
+}
+
+function extractVoidBusinessFields(body: unknown): {
+  reason?: unknown;
+  reverseStock?: unknown;
+} {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return {};
+  }
+  const record = body as Record<string, unknown>;
+  return {
+    reason: record.reason,
+    reverseStock: record.reverseStock,
+  };
+}
+
+function extractManagerApprovalToken(body: unknown): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return undefined;
+  }
+  return (body as Record<string, unknown>).managerApprovalToken;
 }
 
 function approvalErrorMessage(code: ManagerApprovalServiceError["code"]) {

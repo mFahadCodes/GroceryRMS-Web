@@ -16,16 +16,19 @@ Last updated: 2026-07-23 (verified against the repository, not assumed)
 - **P0-C2** — Durable void idempotency and cross-operation concurrency.
   Implemented and verified on branch
   `fix/p0c2-void-idempotency-concurrency` (base `main`
-  `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`); not merged. See
+  `a03ae0c9a813f75b4ca42fe6dd82bc8f4862e141`); not merged. Approved
+  business-rule narrowing: voidable statuses are only `Open` and
+  `PartiallyPaid` (`Closed`/fulfilment use refund/return). Matching replay
+  does not require another approval credential. See
   `docs/security/void-idempotency-concurrency.md`.
 
 ## Verified counts
 
 - Prisma migration head (main): `20260725_000000_add_order_item_return_quantity`
 - Test files on main: **111** / tests **1168** (zero skipped)
-- Branch P0-C2 focused suite: **12** files / **86** tests (includes shared
-  `idempotency-source-regression`)
-- Branch totals after full `npm run test`: **122** files / **1234** tests
+- Branch P0-C2 focused suite: **13** void-* files / **85** tests plus shared
+  manager-approval / idempotency regressions
+- Branch totals after full `npm run test`: **123** files / **1253** tests
   (zero skipped)
 - CI: GitHub Actions workflow **"Quality Gates"**
 - Local toolchain at verification: Node v24.18.0, npm 11.16.0
@@ -55,9 +58,10 @@ Last updated: 2026-07-23 (verified against the repository, not assumed)
 - **P0-C1:** refund and return clients must send `Idempotency-Key`; on
   financial/quantity `409` or `RETURN_HISTORY_RECONCILIATION_REQUIRED`,
   re-read order state before a new attempt.
-- **P0-C2:** void clients must send `Idempotency-Key` in addition to
-  `managerApprovalToken`; on void/financial `409`, re-read order state and use
-  a new key for a new attempt. Replay does not need a fresh approval grant.
+- **P0-C2:** void clients must send `Idempotency-Key`; original execution also
+  needs `managerApprovalToken`. Matching replay does not require another
+  approval credential. On void/financial `409`, re-read order state and use a
+  new key for a new attempt.
 
 ## Current limitations
 

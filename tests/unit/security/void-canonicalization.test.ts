@@ -4,7 +4,7 @@ import {
   ORDER_NOT_VOIDABLE,
   ORDER_VOID_CONFLICT,
 } from "@/lib/security/void-concurrency";
-import { voidOrderSchema } from "@/lib/validators/order.validators";
+import { voidOrderBusinessSchema, voidOrderSchema } from "@/lib/validators/order.validators";
 import { deterministicApprovalToken } from "./void-test-harness";
 
 describe("void request canonicalization", () => {
@@ -61,9 +61,33 @@ describe("void request canonicalization", () => {
       operation: "order.void",
       resourceType: "orders",
       resourceId: 50,
-      payload: base,
+      payload: {
+        ...base,
+        managerApprovalToken: APPROVAL,
+      },
     });
-    expect(hashA).toBe(hashB);
+    // Token must not be part of business hashing when excluded from payload.
+    expect(hashA).toBe(
+      buildIdempotencyRequestHash({
+        operation: "order.void",
+        resourceType: "orders",
+        resourceId: 50,
+        payload: base,
+      }),
+    );
+    expect(hashA).not.toBe(hashB);
+  });
+
+  it("voidOrderBusinessSchema accepts reason without a token", () => {
+    expect(
+      voidOrderBusinessSchema.safeParse({ reason: "x" }).success,
+    ).toBe(true);
+    expect(
+      voidOrderBusinessSchema.safeParse({
+        reason: "x",
+        managerApprovalToken: APPROVAL,
+      }).success,
+    ).toBe(false);
   });
 
   it("reason change alters the request hash", () => {

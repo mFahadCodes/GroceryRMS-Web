@@ -1,20 +1,22 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { ServiceError } from "@/lib/api/service-error";
+import { serializeRecord } from "@/lib/api/serialize";
+import { executeFinancialIdempotent } from "@/lib/services/idempotency-service";
+import { checkoutFast } from "@/lib/services/order-service";
+import {
+  ORDER_NOT_VOIDABLE,
+} from "@/lib/security/void-concurrency";
 import {
   countAudits,
   countIdempotencyRecords,
   countPayments,
   countStockMovements,
-} from "./idempotency-test-database";
-import {
   createIdempotencyTestDatabase,
   IDEMPOTENCY_TEST_KEY,
   IDEMPOTENCY_TEST_KEY_B,
   resetIdempotencyTables,
   seedCheckoutOrderFixture,
 } from "./idempotency-test-database";
-import { serializeRecord } from "@/lib/api/serialize";
-import { executeFinancialIdempotent } from "@/lib/services/idempotency-service";
-import { checkoutFast } from "@/lib/services/order-service";
 import {
   issueVoidGrant,
   runVoidIdempotent,
@@ -33,11 +35,9 @@ describe("void versus checkout races", () => {
     database.cleanup();
   });
 
-  it("when void wins, checkout cannot complete payment or sale stock", async () => {
-    const fixture = await seedVoidableOrderFixture(database.client, {
-      stock: 20,
-      quantity: 2,
-    });
+  async function attachCashShift(
+    fixture: Awaited<ReturnType<typeof seedVoidableOrderFixture>>,
+  ) {
     await database.client.paymentMethod.create({
       data: { id: 1, name: "Cash", code: "CASH" },
     });
@@ -52,6 +52,14 @@ describe("void versus checkout races", () => {
       where: { id: fixture.order.id },
       data: { shiftId: shift.id },
     });
+  }
+
+  it("when void wins, checkout cannot complete payment or sale stock", async () => {
+    const fixture = await seedVoidableOrderFixture(database.client, {
+      stock: 20,
+      quantity: 2,
+    });
+    await attachCashShift(fixture);
     const { token } = await issueVoidGrant(database.client, fixture, 40);
 
     const results = await Promise.allSettled([
@@ -109,6 +117,69 @@ describe("void versus checkout races", () => {
       await expect(countAudits(database.client, "CHECKOUT")).resolves.toBe(1);
     }
     await expect(countIdempotencyRecords(database.client)).resolves.toBe(1);
+  });
+
+  it("checkout commits first; void loses with unconsumed grant and no completed void idempotency", async () => {
+    const fixture = await seedVoidableOrderFixture(database.client, {
+      stock: 20,
+      quantity: 2,
+    });
+    await attachCashShift(fixture);
+
+    await executeFinancialIdempotent({
+      rawKey: IDEMPOTENCY_TEST_KEY,
+      operation: "order.checkout",
+      resourceType: "orders",
+      resourceId: fixture.order.id,
+      actorUserId: fixture.requester.id,
+      authoritativeTerminalId: fixture.requesterContext.terminalId,
+      requestPayload: {
+        orderId: fixture.order.id,
+        paymentMethodId: 1,
+        tenderedAmount: 10_000n,
+      },
+      client: database.client,
+      execute: async (tx) => {
+        const order = await checkoutFast(
+          {
+            orderId: fixture.order.id,
+            paymentMethodId: 1,
+            tenderedAmount: 10_000n,
+            terminalId: fixture.requesterContext.terminalId!,
+            cashierId: fixture.requester.id,
+          },
+          tx,
+        );
+        return { status: 200, body: serializeRecord(order) };
+      },
+    });
+
+    const { token, grant } = await issueVoidGrant(database.client, fixture, 41);
+    await expect(
+      runVoidIdempotent(database.client, fixture, {
+        rawKey: IDEMPOTENCY_TEST_KEY_B,
+        token,
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ServiceError &&
+        error.code === ORDER_NOT_VOIDABLE &&
+        error.status === 409,
+    );
+
+    const order = await database.client.order.findUniqueOrThrow({
+      where: { id: fixture.order.id },
+    });
+    expect(order.status).toBe("Closed");
+    const storedGrant = await database.client.managerApprovalGrant.findUniqueOrThrow({
+      where: { id: grant.id },
+    });
+    expect(storedGrant.consumedAt).toBeNull();
+    await expect(countAudits(database.client, "VOID_ORDER")).resolves.toBe(0);
+    const voidCompleted = await database.client.idempotencyRecord.count({
+      where: { operation: "order.void", state: "Completed" },
+    });
+    expect(voidCompleted).toBe(0);
   });
 
   it("checkout fixture alone can still checkout when no void races", async () => {

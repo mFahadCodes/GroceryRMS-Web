@@ -30,7 +30,10 @@ import {
   remainingRefundableAmount,
   sumCommittedRefundAbsolute,
 } from "@/lib/security/refund-return-concurrency";
-import { claimVoidTransition, ORDER_NOT_VOIDABLE } from "@/lib/security/void-concurrency";
+import {
+  assertOrderVoidable,
+  claimVoidTransition,
+} from "@/lib/security/void-concurrency";
 import {
   consumeManagerApprovalGrant,
   type ManagerApprovalRequester,
@@ -242,13 +245,7 @@ export async function voidOrder(
       include: { orderItems: true, payments: true },
     });
     if (!order) throw new ServiceError("Order not found");
-    if (order.status === "Void") {
-      throw new ServiceError(
-        "Order is already voided",
-        ORDER_NOT_VOIDABLE,
-        409,
-      );
-    }
+    assertOrderVoidable(order.status);
 
     const approval =
       input.approvalToken !== undefined && input.requester !== undefined
@@ -261,10 +258,17 @@ export async function voidOrder(
           })
         : { approverUserId: input.approvedByUserId ?? null };
 
-    // P0-C2: authoritative CAS — at most one void transition commits.
+    // Authoritative CAS — same allowlist as assertOrderVoidable.
     await claimVoidTransition(tx, input.orderId, {
       voidReason: input.reason,
       approvedByUserId: approval.approverUserId,
+    });
+
+    // Re-read committed line/payment state after the claim (no stale pre-claim data
+    // for subsequent effects). Existing void behavior does not reverse payments.
+    const claimedOrder = await tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: { orderItems: true, payments: true },
     });
 
     await tx.orderItem.updateMany({
@@ -273,8 +277,7 @@ export async function voidOrder(
     });
 
     if (input.reverseStock ?? false) {
-      // Only reverse lines that were not already Void (same filter as item update).
-      for (const item of order.orderItems) {
+      for (const item of claimedOrder.orderItems) {
         if (item.status === "Void") continue;
         const qty =
           item.weightKg !== null
@@ -290,8 +293,8 @@ export async function voidOrder(
             type: "Return",
             quantity: qty,
             costAmount: item.unitPrice,
-            reference: order.orderNumber,
-            notes: `Stock reversal for void (${order.orderNumber})`,
+            reference: claimedOrder.orderNumber,
+            notes: `Stock reversal for void (${claimedOrder.orderNumber})`,
             userId: approval.approverUserId,
           },
         });

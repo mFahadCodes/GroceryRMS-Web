@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { FINANCIAL_IDEMPOTENCY_OPERATIONS } from "@/lib/security/idempotency";
 import { MANAGER_APPROVAL_ACTIONS } from "@/lib/security/manager-approval";
+import { VOIDABLE_ORDER_STATUSES } from "@/lib/security/void-concurrency";
 
 const read = (file: string) => readFileSync(path.resolve(file), "utf8");
 
@@ -10,6 +11,7 @@ const VOID_ROUTE = "app/api/orders/[id]/void/route.ts";
 const ORDER_SERVICE = "lib/services/order-service.ts";
 const VOID_CONCURRENCY = "lib/security/void-concurrency.ts";
 const IDEMPOTENCY_LIB = "lib/security/idempotency.ts";
+const VALIDATORS = "lib/validators/order.validators.ts";
 const SCHEMA = "prisma/schema.prisma";
 
 describe("void source regression", () => {
@@ -43,6 +45,16 @@ describe("void source regression", () => {
     expect(block).not.toContain("approvalToken");
   });
 
+  it("validates business payload before execute and token only inside execute", () => {
+    const source = read(VOID_ROUTE);
+    const businessIndex = source.indexOf("voidOrderBusinessSchema");
+    const executeIndex = source.indexOf("execute: async (tx)");
+    const tokenIndex = source.indexOf("voidManagerApprovalTokenSchema.safeParse");
+    expect(businessIndex).toBeGreaterThan(-1);
+    expect(executeIndex).toBeGreaterThan(businessIndex);
+    expect(tokenIndex).toBeGreaterThan(executeIndex);
+  });
+
   it("replay path is before execute which consumes approval", () => {
     const service = read("lib/services/idempotency-service.ts");
     const replayIndex = service.indexOf("loadCompletedReplay");
@@ -58,14 +70,23 @@ describe("void source regression", () => {
     );
     expect(source).toContain("claimVoidTransition");
     expect(source).toContain("consumeManagerApprovalGrant");
+    expect(source).toContain("assertOrderVoidable");
   });
 
-  it("conditional void claim uses updateMany with status not Void", () => {
+  it("conditional void claim uses the exact Open|PartiallyPaid allowlist", () => {
     const source = read(VOID_CONCURRENCY);
     expect(source).toContain("updateMany");
-    expect(source).toContain('status: { not: "Void" }');
+    expect(source).toContain("VOIDABLE_ORDER_STATUSES");
+    expect(source).toContain('status: { in: [...VOIDABLE_ORDER_STATUSES] }');
+    expect(source).not.toContain('status: { not: "Void" }');
+    expect(source).not.toContain("Closed");
+    expect(source).not.toContain("Packed");
+    expect(source).not.toContain("OutForDelivery");
+    expect(source).not.toContain("Delivered");
+    expect([...VOIDABLE_ORDER_STATUSES]).toEqual(["Open", "PartiallyPaid"]);
     expect(source).toContain("ORDER_NOT_VOIDABLE");
     expect(source).toContain("ORDER_VOID_CONFLICT");
+    expect(source).toContain("claimed.count === 1");
   });
 
   it("void route has no optional no-key fallback and no managerPin", () => {
@@ -73,6 +94,21 @@ describe("void source regression", () => {
     expect(source).not.toContain("IDEMPOTENCY_KEY_MISSING");
     expect(source).not.toMatch(/keyParsed\.ok\s*\?\s*/);
     expect(source).not.toContain("managerPin");
+  });
+
+  it("validators keep token out of business schema and forbid PIN fallback", () => {
+    const source = read(VALIDATORS);
+    const business = source.slice(
+      source.indexOf("export const voidOrderBusinessSchema"),
+      source.indexOf("export const voidManagerApprovalTokenSchema"),
+    );
+    expect(business).toContain("reason");
+    expect(business).toContain("reverseStock");
+    expect(business).not.toContain("managerApprovalToken");
+    expect(business).not.toContain("managerPin");
+    expect(source).not.toMatch(
+      /voidOrderSchema[\s\S]{0,400}managerPin/,
+    );
   });
 
   it("does not introduce nested prisma.$transaction inside voidOrder when txClient is provided", () => {
@@ -125,6 +161,7 @@ describe("void source regression", () => {
       "tests/unit/security/void-manager-approval-replay.test.ts",
       "tests/unit/security/void-stock-financial-invariants.test.ts",
       "tests/unit/security/void-related-data.test.ts",
+      "tests/unit/security/void-eligibility.test.ts",
     ];
     for (const file of files) {
       const source = read(file);

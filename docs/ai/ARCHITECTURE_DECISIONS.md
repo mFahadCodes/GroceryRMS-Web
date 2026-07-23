@@ -80,11 +80,14 @@ and become binding only once merged. See
 `docs/security/void-idempotency-concurrency.md`.
 
 - **Void requires `Idempotency-Key`** with operation `order.void`.
-- **Replay resolves before manager approval consumption**; matching replay
-  consumes no grant and does not re-run void logic.
-- **`Order.status ≠ Void` CAS** is the different-key void concurrency boundary
-  (no schema change). Losing requests leave no completed idempotency row and
-  do not consume their approval grant.
+- **Replay resolves before manager approval credential validation**; matching
+  replay consumes no grant, does not require a token, and does not re-run void
+  logic. Original execution still requires a valid one-time grant.
+- **Exact void allowlist CAS** (`Open` | `PartiallyPaid` → `Void`) is the
+  different-key / cross-op void concurrency boundary (approved P0-C2 business
+  rule; no schema change). `Closed`, fulfilment statuses, and `Void` are not
+  voidable. Losing requests leave no completed idempotency row and do not
+  consume their approval grant.
 - Discount idempotency remains deferred.
 
 Do not add speculative future decisions here; record a decision as binding on main only

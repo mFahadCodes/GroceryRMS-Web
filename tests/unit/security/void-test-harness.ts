@@ -36,7 +36,14 @@ export async function seedVoidableOrderFixture(
     reverseStockProduct?: boolean;
     quantity?: number;
     stock?: number;
-    status?: "Open" | "PartiallyPaid" | "Closed";
+    status?:
+      | "Open"
+      | "PartiallyPaid"
+      | "Packed"
+      | "OutForDelivery"
+      | "Delivered"
+      | "Closed"
+      | "Void";
     grandTotal?: bigint;
   } = {},
 ) {
@@ -85,7 +92,8 @@ export async function seedVoidableOrderFixture(
         quantity,
         unitPrice: grandTotal / BigInt(quantity),
         lineTotal: grandTotal,
-        status: status === "Closed" ? "Closed" : "Open",
+        status:
+          status === "Closed" || status === "Void" ? "Closed" : "Open",
       },
     });
   }
