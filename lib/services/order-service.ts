@@ -247,6 +247,16 @@ export async function voidOrder(
     if (!order) throw new ServiceError("Order not found");
     assertOrderVoidable(order.status);
 
+    // Authoritative CAS first — same allowlist as assertOrderVoidable.
+    // Do not consume approval or apply void effects before the claim succeeds.
+    await claimVoidTransition(tx, input.orderId, {
+      voidReason: input.reason,
+      approvedByUserId:
+        input.approvalToken !== undefined
+          ? null
+          : (input.approvedByUserId ?? null),
+    });
+
     const approval =
       input.approvalToken !== undefined && input.requester !== undefined
         ? await consumeManagerApprovalGrant(tx, {
@@ -258,11 +268,12 @@ export async function voidOrder(
           })
         : { approverUserId: input.approvedByUserId ?? null };
 
-    // Authoritative CAS — same allowlist as assertOrderVoidable.
-    await claimVoidTransition(tx, input.orderId, {
-      voidReason: input.reason,
-      approvedByUserId: approval.approverUserId,
-    });
+    if (approval.approverUserId !== null) {
+      await tx.order.update({
+        where: { id: input.orderId },
+        data: { approvedByUserId: approval.approverUserId },
+      });
+    }
 
     // Re-read committed line/payment state after the claim (no stale pre-claim data
     // for subsequent effects). Existing void behavior does not reverse payments.

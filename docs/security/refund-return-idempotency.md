@@ -106,9 +106,9 @@ No manager approval applies on these routes.
 ## Deferred
 
 - Void idempotency — **done in P0-C2**
-  (`docs/security/void-idempotency-concurrency.md`). Closed parents are not
-  voidable; use refund/return. Losing void cannot overwrite P0-C1
-  `returnedQuantity` / `sourceOrderItemId`.
+  (`docs/security/void-idempotency-concurrency.md`). `PartiallyPaid` and
+  `Closed` parents are not voidable; use refund/reversal or refund/return.
+  Losing void cannot overwrite P0-C1 `returnedQuantity` / `sourceOrderItemId`.
 - Physical historical return-lineage reconciliation tooling
 - Idempotency row cleanup
 - PostgreSQL production locking verification

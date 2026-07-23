@@ -53,7 +53,7 @@ describe("void versus partial-payment races", () => {
     return fixture;
   }
 
-  it("void versus non-final partial: at most one incompatible terminal effect set commits", async () => {
+  it("void versus non-final partial: at most one commits", async () => {
     const fixture = await seedPayable(database.client);
     const { token } = await issueVoidGrant(database.client, fixture, 50);
     const results = await Promise.allSettled([
@@ -90,7 +90,7 @@ describe("void versus partial-payment races", () => {
       }),
     ]);
 
-    expect(results.filter((r) => r.status === "fulfilled").length).toBeGreaterThanOrEqual(1);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const order = await database.client.order.findUniqueOrThrow({
       where: { id: fixture.order.id },
     });
@@ -98,15 +98,16 @@ describe("void versus partial-payment races", () => {
     if (order.status === "Void") {
       await expect(countPayments(database.client, fixture.order.id)).resolves.toBe(0);
       await expect(countAudits(database.client, "VOID_ORDER")).resolves.toBe(1);
+      await expect(countAudits(database.client, "PARTIAL_PAYMENT")).resolves.toBe(0);
     } else {
-      expect(["Open", "PartiallyPaid"]).toContain(order.status);
+      expect(order.status).toBe("PartiallyPaid");
       await expect(countPayments(database.client, fixture.order.id)).resolves.toBe(1);
       await expect(countAudits(database.client, "VOID_ORDER")).resolves.toBe(0);
     }
-    await expect(countIdempotencyRecords(database.client)).resolves.toBeLessThanOrEqual(2);
+    await expect(countIdempotencyRecords(database.client)).resolves.toBe(1);
   });
 
-  it("non-final partial may commit before void; void uses latest committed payment state", async () => {
+  it("partial payment commits first; void loses against PartiallyPaid", async () => {
     const fixture = await seedPayable(database.client);
     await executeFinancialIdempotent({
       rawKey: IDEMPOTENCY_TEST_KEY,
@@ -136,24 +137,88 @@ describe("void versus partial-payment races", () => {
       },
     });
 
-    const before = await database.client.payment.findMany({
-      where: { orderId: fixture.order.id },
+    const paid = await database.client.order.findUniqueOrThrow({
+      where: { id: fixture.order.id },
     });
-    expect(before).toHaveLength(1);
-    expect(before[0]!.amount).toBe(4_000n);
+    expect(paid.status).toBe("PartiallyPaid");
 
-    const { token } = await issueVoidGrant(database.client, fixture, 51);
+    const { token, grant } = await issueVoidGrant(database.client, fixture, 51);
+    await expect(
+      runVoidIdempotent(database.client, fixture, {
+        rawKey: IDEMPOTENCY_TEST_KEY_B,
+        token,
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ServiceError &&
+        error.code === ORDER_NOT_VOIDABLE &&
+        error.status === 409,
+    );
+
+    const order = await database.client.order.findUniqueOrThrow({
+      where: { id: fixture.order.id },
+    });
+    expect(order.status).toBe("PartiallyPaid");
+    await expect(countPayments(database.client, fixture.order.id)).resolves.toBe(1);
+    const storedGrant = await database.client.managerApprovalGrant.findUniqueOrThrow({
+      where: { id: grant.id },
+    });
+    expect(storedGrant.consumedAt).toBeNull();
+    await expect(countAudits(database.client, "VOID_ORDER")).resolves.toBe(0);
+    const voidCompleted = await database.client.idempotencyRecord.count({
+      where: { operation: "order.void", state: "Completed" },
+    });
+    expect(voidCompleted).toBe(0);
+  });
+
+  it("void commits first; concurrent partial payment loses", async () => {
+    const fixture = await seedPayable(database.client);
+    const { token } = await issueVoidGrant(database.client, fixture, 52);
     await runVoidIdempotent(database.client, fixture, {
-      rawKey: IDEMPOTENCY_TEST_KEY_B,
+      rawKey: IDEMPOTENCY_TEST_KEY,
       token,
     });
+
+    await expect(
+      executeFinancialIdempotent({
+        rawKey: IDEMPOTENCY_TEST_KEY_B,
+        operation: "order.partial-payment",
+        resourceType: "orders",
+        resourceId: fixture.order.id,
+        actorUserId: fixture.requester.id,
+        authoritativeTerminalId: fixture.requesterContext.terminalId,
+        requestPayload: {
+          orderId: fixture.order.id,
+          paymentMethodId: 1,
+          amount: 4_000n,
+        },
+        client: database.client,
+        execute: async (tx) => {
+          const order = await applyPartialPayment(
+            {
+              orderId: fixture.order.id,
+              paymentMethodId: 1,
+              amount: 4_000n,
+              userId: fixture.requester.id,
+              auditIpAddress: "127.0.0.1",
+            },
+            tx,
+          );
+          return { status: 200, body: serializeRecord(order) };
+        },
+      }),
+    ).rejects.toBeTruthy();
+
     const order = await database.client.order.findUniqueOrThrow({
       where: { id: fixture.order.id },
     });
     expect(order.status).toBe("Void");
-    // Existing void behavior: payments remain; no duplicate payment/cash effect.
-    await expect(countPayments(database.client, fixture.order.id)).resolves.toBe(1);
+    await expect(countPayments(database.client, fixture.order.id)).resolves.toBe(0);
     await expect(countAudits(database.client, "VOID_ORDER")).resolves.toBe(1);
+    const paymentCompleted = await database.client.idempotencyRecord.count({
+      where: { operation: "order.partial-payment", state: "Completed" },
+    });
+    expect(paymentCompleted).toBe(0);
   });
 
   it("finalizing partial payment commits first; void loses against Closed", async () => {
@@ -191,7 +256,7 @@ describe("void versus partial-payment races", () => {
     });
     expect(closed.status).toBe("Closed");
 
-    const { token, grant } = await issueVoidGrant(database.client, fixture, 52);
+    const { token, grant } = await issueVoidGrant(database.client, fixture, 53);
     await expect(
       runVoidIdempotent(database.client, fixture, {
         rawKey: IDEMPOTENCY_TEST_KEY_B,

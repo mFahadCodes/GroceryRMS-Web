@@ -8,6 +8,11 @@ import {
 } from "@/lib/security/void-concurrency";
 import { voidOrder } from "@/lib/services/order-service";
 import {
+  countAudits,
+  countIdempotencyRecords,
+  countPayments,
+} from "./idempotency-test-database";
+import {
   createIdempotencyTestDatabase,
   issueVoidGrant,
   resetIdempotencyTables,
@@ -16,6 +21,7 @@ import {
 } from "./void-test-harness";
 
 const NON_VOIDABLE = [
+  "PartiallyPaid",
   "Packed",
   "OutForDelivery",
   "Delivered",
@@ -35,10 +41,9 @@ describe("void eligibility allowlist", () => {
     database.cleanup();
   });
 
-  it("exports the exact Open|PartiallyPaid allowlist", () => {
-    expect([...VOIDABLE_ORDER_STATUSES]).toEqual(["Open", "PartiallyPaid"]);
+  it("exports the exact Open-only allowlist", () => {
+    expect([...VOIDABLE_ORDER_STATUSES]).toEqual(["Open"]);
     expect(isVoidableOrderStatus("Open")).toBe(true);
-    expect(isVoidableOrderStatus("PartiallyPaid")).toBe(true);
     for (const status of NON_VOIDABLE) {
       expect(isVoidableOrderStatus(status)).toBe(false);
     }
@@ -46,7 +51,6 @@ describe("void eligibility allowlist", () => {
 
   it("assertOrderVoidable matches the CAS allowlist", () => {
     expect(() => assertOrderVoidable("Open")).not.toThrow();
-    expect(() => assertOrderVoidable("PartiallyPaid")).not.toThrow();
     for (const status of NON_VOIDABLE) {
       expect(() => assertOrderVoidable(status)).toThrow(ServiceError);
       try {
@@ -71,24 +75,12 @@ describe("void eligibility allowlist", () => {
     expect(order.status).toBe("Void");
   });
 
-  it("PartiallyPaid can be voided", async () => {
-    const fixture = await seedVoidableOrderFixture(database.client, {
-      status: "PartiallyPaid",
-    });
-    const { token } = await issueVoidGrant(database.client, fixture, 201);
-    await runVoidIdempotent(database.client, fixture, { token });
-    const order = await database.client.order.findUniqueOrThrow({
-      where: { id: fixture.order.id },
-    });
-    expect(order.status).toBe("Void");
-  });
-
   for (const status of NON_VOIDABLE) {
     it(`${status} cannot be voided`, async () => {
       const fixture = await seedVoidableOrderFixture(database.client, {
         status,
       });
-      const { token } = await issueVoidGrant(database.client, fixture, 210);
+      const { token, grant } = await issueVoidGrant(database.client, fixture, 210);
       await expect(
         runVoidIdempotent(database.client, fixture, { token }),
       ).rejects.toSatisfy(
@@ -97,12 +89,56 @@ describe("void eligibility allowlist", () => {
           error.code === ORDER_NOT_VOIDABLE &&
           error.status === 409,
       );
-      const grant = await database.client.managerApprovalGrant.findFirstOrThrow({
-        where: { resourceId: fixture.order.id, action: "order.void" },
+      const storedGrant = await database.client.managerApprovalGrant.findUniqueOrThrow({
+        where: { id: grant.id },
       });
-      expect(grant.consumedAt).toBeNull();
+      expect(storedGrant.consumedAt).toBeNull();
+      await expect(countAudits(database.client, "VOID_ORDER")).resolves.toBe(0);
+      await expect(countIdempotencyRecords(database.client)).resolves.toBe(0);
     });
   }
+
+  it("PartiallyPaid sequential void leaves payments and grant untouched", async () => {
+    const fixture = await seedVoidableOrderFixture(database.client, {
+      status: "PartiallyPaid",
+      grandTotal: 10_000n,
+    });
+    await database.client.paymentMethod.create({
+      data: { id: 1, name: "Cash", code: "CASH" },
+    });
+    await database.client.payment.create({
+      data: {
+        orderId: fixture.order.id,
+        paymentMethodId: 1,
+        amount: 4_000n,
+        tenderedAmount: 4_000n,
+        changeAmount: 0n,
+        status: "Partial",
+      },
+    });
+    const { token, grant } = await issueVoidGrant(database.client, fixture, 230);
+    await expect(
+      runVoidIdempotent(database.client, fixture, { token }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ServiceError && error.code === ORDER_NOT_VOIDABLE,
+    );
+
+    const order = await database.client.order.findUniqueOrThrow({
+      where: { id: fixture.order.id },
+    });
+    expect(order.status).toBe("PartiallyPaid");
+    await expect(countPayments(database.client, fixture.order.id)).resolves.toBe(1);
+    const storedGrant = await database.client.managerApprovalGrant.findUniqueOrThrow({
+      where: { id: grant.id },
+    });
+    expect(storedGrant.consumedAt).toBeNull();
+    await expect(countAudits(database.client, "VOID_ORDER")).resolves.toBe(0);
+    const voidCompleted = await database.client.idempotencyRecord.count({
+      where: { operation: "order.void", state: "Completed" },
+    });
+    expect(voidCompleted).toBe(0);
+  });
 
   it("direct voidOrder rejects Closed without mutating", async () => {
     const fixture = await seedVoidableOrderFixture(database.client, {

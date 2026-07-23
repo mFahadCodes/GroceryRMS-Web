@@ -73,20 +73,33 @@ describe("void source regression", () => {
     expect(source).toContain("assertOrderVoidable");
   });
 
-  it("conditional void claim uses the exact Open|PartiallyPaid allowlist", () => {
+  it("conditional void claim uses the exact Open-only allowlist", () => {
     const source = read(VOID_CONCURRENCY);
     expect(source).toContain("updateMany");
     expect(source).toContain("VOIDABLE_ORDER_STATUSES");
     expect(source).toContain('status: { in: [...VOIDABLE_ORDER_STATUSES] }');
     expect(source).not.toContain('status: { not: "Void" }');
+    expect(source).not.toContain("PartiallyPaid");
     expect(source).not.toContain("Closed");
     expect(source).not.toContain("Packed");
     expect(source).not.toContain("OutForDelivery");
     expect(source).not.toContain("Delivered");
-    expect([...VOIDABLE_ORDER_STATUSES]).toEqual(["Open", "PartiallyPaid"]);
+    expect([...VOIDABLE_ORDER_STATUSES]).toEqual(["Open"]);
+    expect(VOIDABLE_ORDER_STATUSES).toHaveLength(1);
     expect(source).toContain("ORDER_NOT_VOIDABLE");
     expect(source).toContain("ORDER_VOID_CONFLICT");
     expect(source).toContain("claimed.count === 1");
+  });
+
+  it("voidOrder claims before consuming manager approval", () => {
+    const source = read(ORDER_SERVICE);
+    const start = source.indexOf("export async function voidOrder");
+    const end = source.indexOf("export async function holdOrder");
+    const fn = source.slice(start, end);
+    const claimIndex = fn.indexOf("claimVoidTransition");
+    const consumeIndex = fn.indexOf("consumeManagerApprovalGrant");
+    expect(claimIndex).toBeGreaterThan(-1);
+    expect(consumeIndex).toBeGreaterThan(claimIndex);
   });
 
   it("void route has no optional no-key fallback and no managerPin", () => {

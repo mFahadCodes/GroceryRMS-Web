@@ -149,9 +149,9 @@ describe("void idempotency", () => {
     expect(secondGrant.consumedAt).toBeNull();
   });
 
-  it("voids PartiallyPaid orders under current eligibility", async () => {
+  it("voids Open orders under the approved Open-only allowlist", async () => {
     const fixture = await seedVoidableOrderFixture(database.client, {
-      status: "PartiallyPaid",
+      status: "Open",
     });
     const { token } = await issueVoidGrant(database.client, fixture, 10);
     await runVoidIdempotent(database.client, fixture, { token });
@@ -161,7 +161,28 @@ describe("void idempotency", () => {
     expect(order.status).toBe("Void");
   });
 
-  it("rejects Closed orders under the approved Open|PartiallyPaid allowlist", async () => {
+  it("rejects PartiallyPaid orders under the approved Open-only allowlist", async () => {
+    const fixture = await seedVoidableOrderFixture(database.client, {
+      status: "PartiallyPaid",
+    });
+    const { token, grant } = await issueVoidGrant(database.client, fixture, 10);
+    await expect(
+      runVoidIdempotent(database.client, fixture, { token }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ServiceError && error.code === ORDER_NOT_VOIDABLE,
+    );
+    const order = await database.client.order.findUniqueOrThrow({
+      where: { id: fixture.order.id },
+    });
+    expect(order.status).toBe("PartiallyPaid");
+    const storedGrant = await database.client.managerApprovalGrant.findUniqueOrThrow({
+      where: { id: grant.id },
+    });
+    expect(storedGrant.consumedAt).toBeNull();
+  });
+
+  it("rejects Closed orders under the approved Open-only allowlist", async () => {
     const fixture = await seedVoidableOrderFixture(database.client, {
       status: "Closed",
     });

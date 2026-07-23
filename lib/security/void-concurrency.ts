@@ -2,12 +2,11 @@ import type { OrderStatus, Prisma } from "@prisma/client";
 import { ServiceError } from "@/lib/api/service-error";
 
 /**
- * P0-C2 (approved): void is a pre-finalization cancellation.
+ * P0-C2 (approved): void is a pre-payment cancellation of an unpaid Open order.
  * Exact voidable statuses — do not broaden.
  */
 export const VOIDABLE_ORDER_STATUSES = [
   "Open",
-  "PartiallyPaid",
 ] as const satisfies ReadonlyArray<OrderStatus>;
 
 export type VoidableOrderStatus = (typeof VOIDABLE_ORDER_STATUSES)[number];
@@ -17,7 +16,7 @@ export const ORDER_VOID_CONFLICT = "ORDER_VOID_CONFLICT";
 
 export type VoidClaimData = {
   voidReason: string;
-  approvedByUserId: number | null;
+  approvedByUserId?: number | null;
 };
 
 export function isVoidableOrderStatus(
@@ -57,7 +56,9 @@ export async function claimVoidTransition(
     data: {
       status: "Void",
       voidReason: data.voidReason,
-      approvedByUserId: data.approvedByUserId,
+      ...(data.approvedByUserId !== undefined
+        ? { approvedByUserId: data.approvedByUserId }
+        : {}),
     },
   });
   if (claimed.count === 1) return;
