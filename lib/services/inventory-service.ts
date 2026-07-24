@@ -3,6 +3,15 @@ import { writeRequiredAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { buildInventoryApplyAuditMetadata } from "@/lib/security/audit-metadata";
 import { formatPKR } from "@/lib/currency";
+import { ServiceError } from "@/lib/api/service-error";
+import {
+  assertPurchaseOrderReceivable,
+  assertUniquePurchaseOrderItems,
+  claimPurchaseOrderReceipt,
+  incrementPurchaseOrderLine,
+  PURCHASE_ORDER_ITEM_NOT_FOUND,
+  PURCHASE_ORDER_NOT_FOUND,
+} from "@/lib/inventory/purchase-order-receive";
 
 export async function getInventorySummary() {
   const products = await prisma.product.findMany({
@@ -124,20 +133,52 @@ export async function receivePurchaseOrder(
   auditIpAddress?: string | null,
 ) {
   return prisma.$transaction(async (tx) => {
+    assertUniquePurchaseOrderItems(items);
+
     const po = await tx.purchaseOrder.findUnique({
       where: { id },
       include: { items: true },
     });
-    if (!po) throw new Error("Purchase order not found");
+    if (!po) {
+      throw new ServiceError(
+        "Purchase order not found",
+        PURCHASE_ORDER_NOT_FOUND,
+        404,
+      );
+    }
+    assertPurchaseOrderReceivable(po);
+
+    for (const row of items) {
+      if (!po.items.some((item) => item.id === row.itemId)) {
+        throw new ServiceError(
+          "Purchase order item not found",
+          PURCHASE_ORDER_ITEM_NOT_FOUND,
+          404,
+        );
+      }
+    }
+
+    await claimPurchaseOrderReceipt(tx, po.id, new Date());
 
     for (const row of items) {
       const poItem = po.items.find((item) => item.id === row.itemId);
-      if (!poItem) throw new Error(`PO item ${row.itemId} not found`);
+      // Membership was validated before the PO claim. Keep this fail-closed
+      // guard local so future refactors cannot accidentally accept another PO's
+      // item between validation and mutation.
+      if (!poItem) {
+        throw new ServiceError(
+          "Purchase order item not found",
+          PURCHASE_ORDER_ITEM_NOT_FOUND,
+          404,
+        );
+      }
 
       const qty = new Prisma.Decimal(row.quantityReceived);
-      await tx.purchaseOrderItem.update({
-        where: { id: poItem.id },
-        data: { quantityReceived: { increment: qty } },
+      await incrementPurchaseOrderLine(tx, {
+        purchaseOrderId: po.id,
+        itemId: poItem.id,
+        priorQuantity: poItem.quantityReceived,
+        receivedQuantity: qty,
       });
       await tx.product.update({
         where: { id: poItem.productId },
@@ -164,9 +205,8 @@ export async function receivePurchaseOrder(
       ipAddress: auditIpAddress ?? null,
     });
 
-    return tx.purchaseOrder.update({
+    return tx.purchaseOrder.findUniqueOrThrow({
       where: { id },
-      data: { status: "Received", receivedAt: new Date() },
       include: { items: true, supplier: true },
     });
   });
