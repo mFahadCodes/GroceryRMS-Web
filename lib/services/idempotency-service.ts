@@ -119,7 +119,7 @@ async function loadCompletedReplay<T>(
 export async function executeFinancialIdempotent<T>(input: {
   rawKey: string;
   operation: FinancialIdempotencyOperation;
-  resourceType: "orders";
+  resourceType: "orders" | "stock_takes";
   resourceId: number;
   actorUserId: number;
   authoritativeTerminalId: number | null;

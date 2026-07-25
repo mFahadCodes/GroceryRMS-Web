@@ -72,12 +72,23 @@ export type VoidBusinessPayload = {
   reverseStock: boolean;
 };
 
+export type StockTakeApplyItemLine = {
+  itemId: number;
+  countedQty: string | number;
+};
+
+export type StockTakeApplyBusinessPayload = {
+  stockTakeId: number;
+  items: StockTakeApplyItemLine[];
+};
+
 export type FinancialBusinessPayloadByOperation = {
   "order.checkout": CheckoutBusinessPayload;
   "order.partial-payment": PartialPaymentBusinessPayload;
   "order.refund": RefundBusinessPayload;
   "order.return": ReturnBusinessPayload;
   "order.void": VoidBusinessPayload;
+  "inventory.stock-take-apply": StockTakeApplyBusinessPayload;
 };
 
 export type FinancialExecutionCredentials = {
