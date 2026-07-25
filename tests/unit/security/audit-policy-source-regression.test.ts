@@ -151,8 +151,11 @@ describe("audit policy source regression", () => {
   it("fails if orders/[id]/route.ts passes parsed.data as newValues", () => {
     const source = read("app/api/orders/[id]/route.ts");
     expect(source).not.toMatch(/newValues:\s*parsed\.data\b/);
-    expect(source).toContain("buildOrderItemAddedAuditMetadata");
     expect(source).toContain("buildOrderMetadataUpdateAuditMetadata");
+    // Item mutation audits moved into order-service transactions (P0-F).
+    const service = read("lib/services/order-service.ts");
+    expect(service).toContain("buildOrderItemAddedAuditMetadata");
+    expect(service).toContain("writeRequiredAudit");
   });
 
   it("soft-checks against unregistered dynamic action template strings", () => {

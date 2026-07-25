@@ -245,14 +245,21 @@ describe("generic order update route contract", () => {
 
   it("preserves the existing item action wiring", async () => {
     mocks.addItemToOrder.mockResolvedValue({});
-    mocks.calculateTotals.mockResolvedValue({ ...OPEN_ORDER });
     const response = await PUT(
       request({ action: "addItem", productId: 3, quantity: 2 }),
       context,
     );
     expect(response.status).toBe(200);
-    expect(mocks.addItemToOrder).toHaveBeenCalledOnce();
-    expect(mocks.calculateTotals).toHaveBeenCalledExactlyOnceWith(50);
+    expect(mocks.addItemToOrder).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        orderId: 50,
+        productId: 3,
+        quantity: 2,
+        userId: 2,
+      }),
+    );
+    expect(mocks.calculateTotals).not.toHaveBeenCalled();
     expect(mocks.updateOrderMetadata).not.toHaveBeenCalled();
+    expect(mocks.auditFromRequest).not.toHaveBeenCalled();
   });
 });
