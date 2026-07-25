@@ -159,6 +159,7 @@ describe("void source regression", () => {
       "order.return",
       "order.void",
       "order.discount",
+      "inventory.stock-take-apply",
     ]);
   });
 

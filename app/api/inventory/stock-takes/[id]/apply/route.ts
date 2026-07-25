@@ -52,8 +52,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const bodyData = "body" in applied ? applied.body : serializeRecord(applied);
-    const status = "status" in applied ? applied.status : 200;
-    const replayedHeader = "replayed" in applied ? String(applied.replayed) : "false";
+    const status = "replayed" in applied ? (applied as { status: number }).status : 200;
+    const replayedHeader = "replayed" in applied ? String((applied as { replayed: boolean }).replayed) : "false";
 
     return ok(bodyData, status, { "Idempotency-Replayed": replayedHeader });
   } catch (error) {
