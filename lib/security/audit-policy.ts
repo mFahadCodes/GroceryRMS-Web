@@ -173,9 +173,9 @@ export const AUDIT_EVENTS = {
 
   // --- Best-effort operational metadata ------------------------------------
   ADD_CUSTOMER_ADDRESS: bestEffort("customer_addresses"),
-  ADD_ORDER_ITEM: bestEffort("order_items"),
+  ADD_ORDER_ITEM: required("order_items"),
   ADJUST_LOYALTY: bestEffort("customers"),
-  APPLY_ORDER_TAX: bestEffort("orders"),
+  APPLY_ORDER_TAX: required("orders"),
   CASH_DRAWER_ENTRY: bestEffort("cash_drawer_logs"),
   CLOSE_SHIFT: required("shifts"),
   CREATE_CATEGORY: bestEffort("product_categories"),
@@ -204,7 +204,7 @@ export const AUDIT_EVENTS = {
   DELETE_DISCOUNT: bestEffort("discounts"),
   DELETE_EMPLOYEE: bestEffort("employees"),
   DELETE_EXPENSE: bestEffort("expenses"),
-  DELETE_ORDER_ITEM: bestEffort("order_items"),
+  DELETE_ORDER_ITEM: required("order_items"),
   DELETE_PAYMENT_METHOD: bestEffort("payment_methods"),
   DELETE_PRINTER: bestEffort("printers"),
   DELETE_PRODUCT: bestEffort("products"),
@@ -221,7 +221,7 @@ export const AUDIT_EVENTS = {
   HOLD_ORDER: bestEffort("orders"),
   MERGE_CATEGORY: bestEffort("product_categories"),
   OPEN_SHIFT: bestEffort("shifts"),
-  PATCH_ORDER_ITEM: bestEffort("order_items"),
+  PATCH_ORDER_ITEM: required("order_items"),
   PAY_EXPENSE: bestEffort("expenses"),
   PAY_PAYROLL: bestEffort("payroll"),
   RECALL_ORDER: bestEffort("orders"),
@@ -233,8 +233,8 @@ export const AUDIT_EVENTS = {
   UPDATE_DISCOUNT: bestEffort("discounts"),
   UPDATE_EMPLOYEE: bestEffort("employees"),
   UPDATE_EXPENSE: bestEffort("expenses"),
-  UPDATE_ORDER_ADJUSTMENT: bestEffort("orders"),
-  UPDATE_ORDER_ITEM: bestEffort("order_items"),
+  UPDATE_ORDER_ADJUSTMENT: required("orders"),
+  UPDATE_ORDER_ITEM: required("order_items"),
   UPDATE_ORDER_META: bestEffort("orders"),
   UPDATE_ORDER_NOTES: bestEffort("orders"),
   UPDATE_PAYMENT_METHOD: bestEffort("payment_methods"),
@@ -248,7 +248,7 @@ export const AUDIT_EVENTS = {
   UPDATE_TERMINAL: bestEffort("terminals"),
   UPLOAD_CATEGORY_IMAGE: bestEffort("product_categories"),
   UPLOAD_PRODUCT_IMAGE: bestEffort("products"),
-  VOID_ORDER_ITEM: bestEffort("order_items"),
+  VOID_ORDER_ITEM: required("order_items"),
 } as const satisfies Record<string, AuditEventDefinition>;
 
 export type RegisteredAuditAction = keyof typeof AUDIT_EVENTS;

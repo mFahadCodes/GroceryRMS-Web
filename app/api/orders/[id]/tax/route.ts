@@ -2,9 +2,10 @@ import { NextRequest } from "next/server";
 import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
+import { ServiceError } from "@/lib/api/service-error";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
 import { serializeRecord } from "@/lib/api/serialize";
+import { resolveClientIp } from "@/lib/client-ip";
 import { applyOrderTax } from "@/lib/services/order-service";
 import { applyOrderTaxSchema } from "@/lib/validators/order.validators";
 
@@ -27,20 +28,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   try {
-    const updated = await applyOrderTax(orderId, parsed.data.taxRateId);
-    await auditFromRequest(request, {
+    const updated = await applyOrderTax({
+      orderId,
+      taxRateId: parsed.data.taxRateId,
       userId: auth.session.user.id,
-      action: "APPLY_ORDER_TAX",
-      tableName: "orders",
-      recordId: orderId,
-      newValues: parsed.data,
+      auditIpAddress: resolveClientIp(request),
     });
     return ok(serializeRecord(updated));
   } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "Failed to apply tax",
-      "APPLY_TAX_FAILED",
-      400,
-    );
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
+    return fail("Failed to apply tax", "APPLY_TAX_FAILED", 400);
   }
 }

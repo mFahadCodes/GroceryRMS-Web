@@ -13,11 +13,17 @@ import {
 import type {
   InventoryApplyAuditMetadata,
   ManagerApprovalAuditMetadata,
+  OrderAdjustmentAuditMetadata,
   OrderCheckoutAuditMetadata,
   OrderDiscountAuditMetadata,
+  OrderItemAddedAuditMetadata,
+  OrderItemPatchAuditMetadata,
+  OrderItemQuantityAuditMetadata,
+  OrderItemVoidAuditMetadata,
   OrderPartialPaymentAuditMetadata,
   OrderRefundAuditMetadata,
   OrderReturnAuditMetadata,
+  OrderTaxApplyAuditMetadata,
   OrderVoidAuditMetadata,
   PasswordChangedAuditMetadata,
   PinChangedAuditMetadata,
@@ -130,6 +136,13 @@ type RequiredAuditMetadataMap = {
   MANAGER_APPROVAL_CONSUMED: ManagerApprovalAuditMetadata;
   VOID_ORDER: OrderVoidAuditMetadata;
   APPLY_ORDER_DISCOUNT: OrderDiscountAuditMetadata;
+  APPLY_ORDER_TAX: OrderTaxApplyAuditMetadata;
+  ADD_ORDER_ITEM: OrderItemAddedAuditMetadata;
+  PATCH_ORDER_ITEM: OrderItemPatchAuditMetadata;
+  UPDATE_ORDER_ITEM: OrderItemQuantityAuditMetadata;
+  DELETE_ORDER_ITEM: OrderItemVoidAuditMetadata;
+  VOID_ORDER_ITEM: OrderItemVoidAuditMetadata;
+  UPDATE_ORDER_ADJUSTMENT: OrderAdjustmentAuditMetadata;
   CHECKOUT: OrderCheckoutAuditMetadata;
   PARTIAL_PAYMENT: OrderPartialPaymentAuditMetadata;
   REFUND_ORDER: OrderRefundAuditMetadata;

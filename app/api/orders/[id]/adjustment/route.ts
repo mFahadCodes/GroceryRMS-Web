@@ -2,10 +2,10 @@ import { NextRequest } from "next/server";
 import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
-import { getServiceErrorMessage } from "@/lib/api/service-error";
+import { ServiceError } from "@/lib/api/service-error";
 import { fail, ok } from "@/lib/api-response";
 import { serializeRecord } from "@/lib/api/serialize";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import { applyOrderAdjustment } from "@/lib/services/order-service";
 import { applyOrderAdjustmentSchema } from "@/lib/validators/order.validators";
 
@@ -26,18 +26,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   try {
-    const updated = await applyOrderAdjustment(orderId, parsed.data.adjustment);
-    await auditFromRequest(request, {
+    const updated = await applyOrderAdjustment({
+      orderId,
+      adjustment: parsed.data.adjustment,
       userId: auth.session.user.id,
-      action: "UPDATE_ORDER_ADJUSTMENT",
-      tableName: "orders",
-      recordId: orderId,
-      newValues: parsed.data,
+      auditIpAddress: resolveClientIp(request),
     });
     return ok(serializeRecord(updated));
   } catch (error) {
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
     return fail(
-      getServiceErrorMessage(error, "Failed to apply adjustment"),
+      "Failed to apply adjustment",
       "UPDATE_ORDER_ADJUSTMENT_FAILED",
       400,
     );
