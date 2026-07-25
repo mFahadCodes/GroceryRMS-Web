@@ -2,16 +2,11 @@ import { NextRequest } from "next/server";
 import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
+import { ServiceError } from "@/lib/api/service-error";
 import { serializeRecord } from "@/lib/api/serialize";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
+import { resolveClientIp } from "@/lib/client-ip";
 import {
-  buildOrderItemQuantityAuditMetadata,
-  summarizeFreeTextReason,
-} from "@/lib/security/audit-metadata";
-import {
-  calculateTotals,
-  getOrderById,
   removeOrderItem,
   updateItemQuantity,
 } from "@/lib/services/order-service";
@@ -37,33 +32,38 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   try {
+    const audit = {
+      userId: auth.session.user.id,
+      auditIpAddress: resolveClientIp(request),
+    };
+    let order;
     if (parsed.data.quantity !== undefined) {
-      await updateItemQuantity(orderItemId, parsed.data.quantity);
+      order = await updateItemQuantity({
+        orderId,
+        orderItemId,
+        quantity: parsed.data.quantity,
+        ...audit,
+        auditAction: "PATCH_ORDER_ITEM",
+      });
     }
     if (parsed.data.voidReason !== undefined) {
-      await removeOrderItem(orderItemId, parsed.data.voidReason);
+      order = await removeOrderItem({
+        orderId,
+        orderItemId,
+        voidReason: parsed.data.voidReason,
+        ...audit,
+        auditAction: "PATCH_ORDER_ITEM",
+      });
     }
-    const updated = await calculateTotals(orderId);
-    const order = await getOrderById(updated.id);
-    await auditFromRequest(request, {
-      userId: auth.session.user.id,
-      action: "PATCH_ORDER_ITEM",
-      recordId: orderItemId,
-      newValues: {
-        ...buildOrderItemQuantityAuditMetadata({
-          orderItemId,
-          quantity: parsed.data.quantity,
-        }),
-        ...summarizeFreeTextReason(parsed.data.voidReason),
-      },
-    });
+    if (!order) {
+      return fail("Invalid request body", "VALIDATION_ERROR", 400);
+    }
     return ok(serializeRecord(order));
   } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "Failed to patch order item",
-      "PATCH_ORDER_ITEM_FAILED",
-      400,
-    );
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
+    return fail("Failed to patch order item", "PATCH_ORDER_ITEM_FAILED", 400);
   }
 }
 
@@ -79,20 +79,19 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   }
 
   try {
-    await removeOrderItem(orderItemId, "Deleted from item route");
-    const updated = await calculateTotals(orderId);
-    const order = await getOrderById(updated.id);
-    await auditFromRequest(request, {
+    const order = await removeOrderItem({
+      orderId,
+      orderItemId,
+      voidReason: "Deleted from item route",
       userId: auth.session.user.id,
-      action: "DELETE_ORDER_ITEM",
-      recordId: orderItemId,
+      auditIpAddress: resolveClientIp(request),
+      auditAction: "DELETE_ORDER_ITEM",
     });
     return ok(serializeRecord(order));
   } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "Failed to delete order item",
-      "DELETE_ORDER_ITEM_FAILED",
-      400,
-    );
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
+    return fail("Failed to delete order item", "DELETE_ORDER_ITEM_FAILED", 400);
   }
 }

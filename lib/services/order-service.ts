@@ -6,11 +6,17 @@ import { ServiceError } from "@/lib/api/service-error";
 import { createOrderWithUniqueNumber } from "@/lib/order-number";
 import { calculatePaisaTotals } from "@/lib/paisa-math";
 import {
+  buildOrderAdjustmentAuditMetadata,
   buildOrderCheckoutAuditMetadata,
   buildOrderDiscountAuditMetadata,
+  buildOrderItemAddedAuditMetadata,
+  buildOrderItemPatchAuditMetadata,
+  buildOrderItemQuantityAuditMetadata,
+  buildOrderItemVoidAuditMetadata,
   buildOrderPartialPaymentAuditMetadata,
   buildOrderRefundAuditMetadata,
   buildOrderReturnAuditMetadata,
+  buildOrderTaxApplyAuditMetadata,
   buildOrderVoidAuditMetadata,
 } from "@/lib/security/audit-metadata";
 import {
@@ -22,6 +28,11 @@ import {
   remainingBalance,
   sumPaymentAmounts,
 } from "@/lib/security/order-financial-concurrency";
+import {
+  acquireOpenOrderWrite,
+  assertOrderMutable,
+  claimOrderTotalsUpdate,
+} from "@/lib/security/order-mutable-concurrency";
 import {
   acquireClosedOrderWrite,
   assertNoLegacyNullLineageReturns,
@@ -105,8 +116,10 @@ export async function calculateTotals(
   orderId: number,
   discountPercent = 0,
   taxPercent?: number,
+  tx?: Prisma.TransactionClient,
 ) {
-  const order = await prisma.order.findUnique({
+  const store = tx ?? prisma;
+  const order = await store.order.findUnique({
     where: { id: orderId },
     include: {
       orderItems: { where: { status: { not: "Void" } } },
@@ -128,7 +141,7 @@ export async function calculateTotals(
   const tax =
     taxPercent !== undefined
       ? { taxPercent, isInclusive: false }
-      : await resolveTaxRate(order.taxRateId);
+      : await resolveTaxRate(order.taxRateId, store);
 
   const totals = calculatePaisaTotals({
     subTotal,
@@ -139,7 +152,7 @@ export async function calculateTotals(
     adjustment: order.adjustment,
   });
 
-  return prisma.order.update({
+  return store.order.update({
     where: { id: orderId },
     data: {
       subTotal: totals.subTotal,
@@ -152,87 +165,187 @@ export async function calculateTotals(
   });
 }
 
-export async function addItemToOrder(input: {
-  orderId: number;
-  productId?: number;
-  variantId?: number | null;
-  quantity: number;
-  weightKg?: string | number | null;
-  notes?: string | null;
-  scannedBarcode?: string | null;
-}) {
-  let productId = input.productId;
-  if (!productId && input.scannedBarcode) {
-    const byBarcode = await prisma.product.findFirst({
-      where: { barcode: input.scannedBarcode, isActive: true },
-      select: { id: true },
-    });
-    productId = byBarcode?.id;
-  }
-  if (!productId) throw new ServiceError("Product id or scanned barcode is required");
-
-  const product = await prisma.product.findFirst({
-    where: { id: productId, isActive: true },
+async function claimRecalculatedOpenOrderTotals(
+  tx: Prisma.TransactionClient,
+  orderId: number,
+  prior: { subTotal: bigint; taxAmount: bigint; grandTotal: bigint },
+  order: {
+    discountAmount: bigint;
+    serviceCharge: bigint;
+    taxRateId: number | null;
+    adjustment: bigint;
+    orderItems: ReadonlyArray<{ lineTotal: bigint }>;
+  },
+  extras: {
+    taxPercent?: number;
+    isInclusive?: boolean;
+    taxRateId?: number | null;
+    adjustment?: bigint;
+    discountAmount?: bigint;
+  } = {},
+) {
+  const subTotal = order.orderItems.reduce(
+    (sum, item) => sum + item.lineTotal,
+    0n,
+  );
+  const discountAmount = extras.discountAmount ?? order.discountAmount;
+  const adjustment = extras.adjustment ?? order.adjustment;
+  const tax =
+    extras.taxPercent !== undefined
+      ? {
+          taxPercent: extras.taxPercent,
+          isInclusive: extras.isInclusive ?? false,
+        }
+      : await resolveTaxRate(extras.taxRateId ?? order.taxRateId, tx);
+  const totals = calculatePaisaTotals({
+    subTotal,
+    discountAmount,
+    taxPercent: tax.taxPercent,
+    isInclusive: tax.isInclusive,
+    serviceChargeAmount: order.serviceCharge,
+    adjustment,
   });
-  if (!product) throw new ServiceError("Product not found");
-
-  let unitPrice = product.basePrice;
-  if (input.variantId) {
-    const variant = await prisma.productVariant.findFirst({
-      where: { id: input.variantId, productId, isActive: true },
-    });
-    if (!variant) throw new ServiceError("Variant not found");
-    unitPrice = variant.priceOverride;
-  }
-
-  const existing = await prisma.orderItem.findFirst({
-    where: {
-      orderId: input.orderId,
-      productId,
-      variantId: input.variantId ?? null,
-      status: { not: "Void" },
-    },
+  await claimOrderTotalsUpdate(tx, orderId, prior, {
+    subTotal: totals.subTotal,
+    taxAmount: totals.taxAmount,
+    grandTotal: totals.grandTotal,
+    discountAmount: totals.discountAmount,
+    serviceCharge: totals.serviceCharge,
+    ...(extras.taxRateId !== undefined ? { taxRateId: extras.taxRateId } : {}),
+    ...(extras.adjustment !== undefined ? { adjustment: extras.adjustment } : {}),
   });
+  return totals;
+}
 
-  if (existing && !product.isWeighted) {
-    const quantity = existing.quantity + input.quantity;
-    return prisma.orderItem.update({
-      where: { id: existing.id },
-      data: {
-        quantity,
-        lineTotal: existing.unitPrice * BigInt(quantity),
+export async function addItemToOrder(
+  input: {
+    orderId: number;
+    productId?: number;
+    variantId?: number | null;
+    quantity: number;
+    weightKg?: string | number | null;
+    notes?: string | null;
+    scannedBarcode?: string | null;
+    userId: number;
+    auditIpAddress?: string | null;
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
+    await acquireOpenOrderWrite(tx, input.orderId);
+
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: {
+        orderItems: { where: { status: { not: "Void" } } },
       },
-      include: { product: true, variant: true },
     });
-  }
+    if (!order) throw new ServiceError("Order not found");
+    assertOrderMutable(order.status);
 
-  const qty = input.quantity;
-  const weightKgValue =
-    input.weightKg !== undefined && input.weightKg !== null
-      ? Number(input.weightKg)
-      : null;
-  const lineTotal =
-    product.isWeighted && weightKgValue !== null
-      ? (unitPrice * BigInt(Math.round(weightKgValue * 1000))) / 1000n
-      : unitPrice * BigInt(qty);
+    const prior = {
+      subTotal: order.subTotal,
+      taxAmount: order.taxAmount,
+      grandTotal: order.grandTotal,
+    };
 
-  return prisma.orderItem.create({
-    data: {
-      orderId: input.orderId,
-      productId,
-      variantId: input.variantId ?? null,
-      quantity: qty,
-      unitPrice,
-      lineTotal,
-      notes: input.notes ?? null,
-      weightKg:
+    let productId = input.productId;
+    if (!productId && input.scannedBarcode) {
+      const byBarcode = await tx.product.findFirst({
+        where: { barcode: input.scannedBarcode, isActive: true },
+        select: { id: true },
+      });
+      productId = byBarcode?.id;
+    }
+    if (!productId) {
+      throw new ServiceError("Product id or scanned barcode is required");
+    }
+
+    const product = await tx.product.findFirst({
+      where: { id: productId, isActive: true },
+    });
+    if (!product) throw new ServiceError("Product not found");
+
+    let unitPrice = product.basePrice;
+    if (input.variantId) {
+      const variant = await tx.productVariant.findFirst({
+        where: { id: input.variantId, productId, isActive: true },
+      });
+      if (!variant) throw new ServiceError("Variant not found");
+      unitPrice = variant.priceOverride;
+    }
+
+    const existing = await tx.orderItem.findFirst({
+      where: {
+        orderId: input.orderId,
+        productId,
+        variantId: input.variantId ?? null,
+        status: { not: "Void" },
+      },
+    });
+
+    if (existing && !product.isWeighted) {
+      const quantity = existing.quantity + input.quantity;
+      await tx.orderItem.update({
+        where: { id: existing.id },
+        data: {
+          quantity,
+          lineTotal: existing.unitPrice * BigInt(quantity),
+        },
+      });
+    } else {
+      const qty = input.quantity;
+      const weightKgValue =
         input.weightKg !== undefined && input.weightKg !== null
-          ? String(input.weightKg)
-          : null,
-      scannedBarcode: input.scannedBarcode ?? null,
-    },
-    include: { product: true, variant: true },
-  });
+          ? Number(input.weightKg)
+          : null;
+      const lineTotal =
+        product.isWeighted && weightKgValue !== null
+          ? (unitPrice * BigInt(Math.round(weightKgValue * 1000))) / 1000n
+          : unitPrice * BigInt(qty);
+
+      await tx.orderItem.create({
+        data: {
+          orderId: input.orderId,
+          productId,
+          variantId: input.variantId ?? null,
+          quantity: qty,
+          unitPrice,
+          lineTotal,
+          notes: input.notes ?? null,
+          weightKg:
+            input.weightKg !== undefined && input.weightKg !== null
+              ? String(input.weightKg)
+              : null,
+          scannedBarcode: input.scannedBarcode ?? null,
+        },
+      });
+    }
+
+    const refreshed = await tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: {
+        orderItems: { where: { status: { not: "Void" } } },
+      },
+    });
+    await claimRecalculatedOpenOrderTotals(tx, input.orderId, prior, refreshed);
+
+    await writeRequiredAudit(tx, {
+      userId: input.userId,
+      action: "ADD_ORDER_ITEM",
+      recordId: input.orderId,
+      newValues: buildOrderItemAddedAuditMetadata(input),
+      ipAddress: input.auditIpAddress ?? null,
+    });
+
+    return tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: orderInclude,
+    });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 export async function voidOrder(
@@ -807,36 +920,198 @@ export async function refundOrder(
   return prisma.$transaction(run);
 }
 
-export async function updateItemQuantity(orderItemId: number, quantity: number) {
-  const item = await prisma.orderItem.findUnique({
-    where: { id: orderItemId },
-  });
-  if (!item) throw new ServiceError("Order item not found");
+export async function updateItemQuantity(
+  input: {
+    orderId: number;
+    orderItemId: number;
+    quantity: number;
+    userId: number;
+    auditIpAddress?: string | null;
+    auditAction?: "PATCH_ORDER_ITEM" | "UPDATE_ORDER_ITEM";
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
+    await acquireOpenOrderWrite(tx, input.orderId);
 
-  if (quantity <= 0) {
-    await prisma.orderItem.delete({ where: { id: orderItemId } });
-    return null;
-  }
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: {
+        orderItems: { where: { status: { not: "Void" } } },
+      },
+    });
+    if (!order) throw new ServiceError("Order not found");
+    assertOrderMutable(order.status);
 
-  return prisma.orderItem.update({
-    where: { id: orderItemId },
-    data: {
-      quantity,
-      lineTotal: item.unitPrice * BigInt(quantity),
-    },
-    include: { product: true, variant: true },
-  });
+    const item = await tx.orderItem.findUnique({
+      where: { id: input.orderItemId },
+    });
+    if (!item) throw new ServiceError("Order item not found");
+    if (item.orderId !== input.orderId) {
+      throw new ServiceError(
+        "Order item does not belong to this order",
+        "ORDER_ITEM_MISMATCH",
+        409,
+      );
+    }
+
+    const prior = {
+      subTotal: order.subTotal,
+      taxAmount: order.taxAmount,
+      grandTotal: order.grandTotal,
+    };
+
+    if (input.quantity <= 0) {
+      await tx.orderItem.delete({ where: { id: input.orderItemId } });
+    } else {
+      await tx.orderItem.update({
+        where: { id: input.orderItemId },
+        data: {
+          quantity: input.quantity,
+          lineTotal: item.unitPrice * BigInt(input.quantity),
+        },
+      });
+    }
+
+    const refreshed = await tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: {
+        orderItems: { where: { status: { not: "Void" } } },
+      },
+    });
+    await claimRecalculatedOpenOrderTotals(tx, input.orderId, prior, refreshed);
+
+    const auditAction = input.auditAction ?? "PATCH_ORDER_ITEM";
+    if (auditAction === "UPDATE_ORDER_ITEM") {
+      await writeRequiredAudit(tx, {
+        userId: input.userId,
+        action: "UPDATE_ORDER_ITEM",
+        recordId: input.orderItemId,
+        newValues: buildOrderItemQuantityAuditMetadata({
+          orderItemId: input.orderItemId,
+          quantity: input.quantity,
+        }),
+        ipAddress: input.auditIpAddress ?? null,
+      });
+    } else {
+      await writeRequiredAudit(tx, {
+        userId: input.userId,
+        action: "PATCH_ORDER_ITEM",
+        recordId: input.orderItemId,
+        newValues: buildOrderItemPatchAuditMetadata({
+          orderItemId: input.orderItemId,
+          quantity: input.quantity,
+        }),
+        ipAddress: input.auditIpAddress ?? null,
+      });
+    }
+
+    return tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: orderInclude,
+    });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 export async function removeOrderItem(
-  orderItemId: number,
-  voidReason?: string | null,
+  input: {
+    orderId: number;
+    orderItemId: number;
+    voidReason?: string | null;
+    userId: number;
+    auditIpAddress?: string | null;
+    auditAction?: "DELETE_ORDER_ITEM" | "VOID_ORDER_ITEM" | "PATCH_ORDER_ITEM";
+  },
+  txClient?: Prisma.TransactionClient,
 ) {
-  return prisma.orderItem.update({
-    where: { id: orderItemId },
-    data: { status: "Void", voidReason: voidReason ?? null },
-    include: { product: true, variant: true },
-  });
+  const run = async (tx: Prisma.TransactionClient) => {
+    await acquireOpenOrderWrite(tx, input.orderId);
+
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: {
+        orderItems: { where: { status: { not: "Void" } } },
+      },
+    });
+    if (!order) throw new ServiceError("Order not found");
+    assertOrderMutable(order.status);
+
+    const item = await tx.orderItem.findUnique({
+      where: { id: input.orderItemId },
+    });
+    if (!item) throw new ServiceError("Order item not found");
+    if (item.orderId !== input.orderId) {
+      throw new ServiceError(
+        "Order item does not belong to this order",
+        "ORDER_ITEM_MISMATCH",
+        409,
+      );
+    }
+
+    const prior = {
+      subTotal: order.subTotal,
+      taxAmount: order.taxAmount,
+      grandTotal: order.grandTotal,
+    };
+
+    await tx.orderItem.update({
+      where: { id: input.orderItemId },
+      data: { status: "Void", voidReason: input.voidReason ?? null },
+    });
+
+    const refreshed = await tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: {
+        orderItems: { where: { status: { not: "Void" } } },
+      },
+    });
+    await claimRecalculatedOpenOrderTotals(tx, input.orderId, prior, refreshed);
+
+    const auditAction = input.auditAction ?? "DELETE_ORDER_ITEM";
+    const metadata = buildOrderItemVoidAuditMetadata({
+      orderItemId: input.orderItemId,
+      voidReason: input.voidReason,
+    });
+    if (auditAction === "PATCH_ORDER_ITEM") {
+      await writeRequiredAudit(tx, {
+        userId: input.userId,
+        action: "PATCH_ORDER_ITEM",
+        recordId: input.orderItemId,
+        newValues: buildOrderItemPatchAuditMetadata({
+          orderItemId: input.orderItemId,
+          voidReason: input.voidReason,
+        }),
+        ipAddress: input.auditIpAddress ?? null,
+      });
+    } else if (auditAction === "VOID_ORDER_ITEM") {
+      await writeRequiredAudit(tx, {
+        userId: input.userId,
+        action: "VOID_ORDER_ITEM",
+        recordId: input.orderItemId,
+        newValues: metadata,
+        ipAddress: input.auditIpAddress ?? null,
+      });
+    } else {
+      await writeRequiredAudit(tx, {
+        userId: input.userId,
+        action: "DELETE_ORDER_ITEM",
+        recordId: input.orderItemId,
+        newValues: metadata,
+        ipAddress: input.auditIpAddress ?? null,
+      });
+    }
+
+    return tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: orderInclude,
+    });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 export async function getOpenOrders() {
@@ -927,38 +1202,71 @@ async function hasPermissionInTransaction(
   return (user?.role.rolePermissions[0]?.accessLevel ?? 0) >= minimumLevel;
 }
 
-export async function applyOrderTax(orderId: number, taxRateId: number) {
-  const taxRate = await prisma.taxRate.findFirst({
-    where: { id: taxRateId, isActive: true },
-  });
-  if (!taxRate) throw new ServiceError("Tax rate not found");
+export async function applyOrderTax(
+  input: {
+    orderId: number;
+    taxRateId: number;
+    userId: number;
+    auditIpAddress?: string | null;
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
+    const taxRate = await tx.taxRate.findFirst({
+      where: { id: input.taxRateId, isActive: true },
+    });
+    if (!taxRate) throw new ServiceError("Tax rate not found");
 
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: { orderItems: { where: { status: { not: "Void" } } } },
-  });
-  if (!order) throw new ServiceError("Order not found");
+    await acquireOpenOrderWrite(tx, input.orderId);
 
-  const subTotal = order.orderItems.reduce((sum, item) => sum + item.lineTotal, 0n);
-  const totals = calculatePaisaTotals({
-    subTotal,
-    discountAmount: order.discountAmount,
-    taxPercent: Number(taxRate.rate),
-    isInclusive: taxRate.isInclusive,
-    serviceChargeAmount: order.serviceCharge,
-    adjustment: order.adjustment,
-  });
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: { orderItems: { where: { status: { not: "Void" } } } },
+    });
+    if (!order) throw new ServiceError("Order not found");
+    assertOrderMutable(order.status);
 
-  return prisma.order.update({
-    where: { id: orderId },
-    data: {
-      taxRateId,
-      subTotal: totals.subTotal,
-      taxAmount: totals.taxAmount,
-      grandTotal: totals.grandTotal,
-    },
-    include: orderInclude,
-  });
+    const prior = {
+      subTotal: order.subTotal,
+      taxAmount: order.taxAmount,
+      grandTotal: order.grandTotal,
+    };
+
+    const totals = await claimRecalculatedOpenOrderTotals(
+      tx,
+      input.orderId,
+      prior,
+      order,
+      {
+        taxPercent: Number(taxRate.rate),
+        isInclusive: taxRate.isInclusive,
+        taxRateId: input.taxRateId,
+      },
+    );
+
+    await writeRequiredAudit(tx, {
+      userId: input.userId,
+      action: "APPLY_ORDER_TAX",
+      recordId: input.orderId,
+      newValues: buildOrderTaxApplyAuditMetadata({
+        orderId: input.orderId,
+        taxRateId: input.taxRateId,
+        priorTaxAmount: prior.taxAmount,
+        newTaxAmount: totals.taxAmount,
+        priorGrandTotal: prior.grandTotal,
+        newGrandTotal: totals.grandTotal,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
+
+    return tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: orderInclude,
+    });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 export async function applyPartialPayment(
@@ -1519,37 +1827,59 @@ function formatInvoiceNumber(orderId: number, date = new Date()): string {
   return `INV-${ymd}-${orderId}`;
 }
 
-export async function applyOrderAdjustment(orderId: number, adjustment: bigint) {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: { orderItems: { where: { status: { not: "Void" } } } },
-  });
-  if (!order) throw new ServiceError("Order not found", "ORDER_NOT_FOUND");
-  if (order.status !== "Open") {
-    throw new ServiceError("Only open orders can be adjusted", "ORDER_NOT_OPEN");
-  }
+export async function applyOrderAdjustment(
+  input: {
+    orderId: number;
+    adjustment: bigint;
+    userId: number;
+    auditIpAddress?: string | null;
+  },
+  txClient?: Prisma.TransactionClient,
+) {
+  const run = async (tx: Prisma.TransactionClient) => {
+    await acquireOpenOrderWrite(tx, input.orderId);
 
-  const subTotal = order.orderItems.reduce((sum, item) => sum + item.lineTotal, 0n);
-  const tax = await resolveTaxRate(order.taxRateId);
-  const totals = calculatePaisaTotals({
-    subTotal,
-    discountAmount: order.discountAmount,
-    taxPercent: tax.taxPercent,
-    isInclusive: tax.isInclusive,
-    serviceChargeAmount: order.serviceCharge,
-    adjustment,
-  });
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: { orderItems: { where: { status: { not: "Void" } } } },
+    });
+    if (!order) throw new ServiceError("Order not found", "ORDER_NOT_FOUND");
+    assertOrderMutable(order.status);
 
-  return prisma.order.update({
-    where: { id: orderId },
-    data: {
-      adjustment,
-      subTotal: totals.subTotal,
-      taxAmount: totals.taxAmount,
-      grandTotal: totals.grandTotal,
-    },
-    include: orderInclude,
-  });
+    const prior = {
+      subTotal: order.subTotal,
+      taxAmount: order.taxAmount,
+      grandTotal: order.grandTotal,
+    };
+
+    const totals = await claimRecalculatedOpenOrderTotals(
+      tx,
+      input.orderId,
+      prior,
+      order,
+      { adjustment: input.adjustment },
+    );
+
+    await writeRequiredAudit(tx, {
+      userId: input.userId,
+      action: "UPDATE_ORDER_ADJUSTMENT",
+      recordId: input.orderId,
+      newValues: buildOrderAdjustmentAuditMetadata({
+        adjustment: input.adjustment,
+        priorGrandTotal: prior.grandTotal,
+        newGrandTotal: totals.grandTotal,
+      }),
+      ipAddress: input.auditIpAddress ?? null,
+    });
+
+    return tx.order.findUniqueOrThrow({
+      where: { id: input.orderId },
+      include: orderInclude,
+    });
+  };
+
+  if (txClient) return run(txClient);
+  return prisma.$transaction(run);
 }
 
 /**

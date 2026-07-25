@@ -4,15 +4,10 @@ import { requirePermission } from "@/lib/api/rbac";
 import { fail, ok } from "@/lib/api-response";
 import { serializeRecord } from "@/lib/api/serialize";
 import { auditFromRequest } from "@/lib/audit";
-import {
-  buildOrderItemAddedAuditMetadata,
-  buildOrderItemQuantityAuditMetadata,
-  buildOrderItemVoidAuditMetadata,
-  buildOrderMetadataUpdateAuditMetadata,
-} from "@/lib/security/audit-metadata";
+import { resolveClientIp } from "@/lib/client-ip";
+import { buildOrderMetadataUpdateAuditMetadata } from "@/lib/security/audit-metadata";
 import {
   addItemToOrder,
-  calculateTotals,
   getOrderById,
   removeOrderItem,
   updateItemQuantity,
@@ -74,6 +69,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   }
 
   try {
+    const audit = {
+      userId: auth.session.user.id,
+      auditIpAddress: resolveClientIp(request),
+    };
     switch (parsed.data.action) {
       case "addItem": {
         await addItemToOrder({
@@ -84,41 +83,27 @@ export async function PUT(request: NextRequest, context: RouteContext) {
           weightKg: parsed.data.weightKg,
           notes: parsed.data.notes,
           scannedBarcode: parsed.data.scannedBarcode,
-        });
-        await calculateTotals(orderId);
-        await auditFromRequest(request, {
-          userId: auth.session.user.id,
-          action: "ADD_ORDER_ITEM",
-          recordId: orderId,
-          newValues: buildOrderItemAddedAuditMetadata(parsed.data),
+          ...audit,
         });
         break;
       }
       case "updateItem": {
-        await updateItemQuantity(
-          parsed.data.orderItemId,
-          parsed.data.quantity,
-        );
-        await calculateTotals(orderId);
-        await auditFromRequest(request, {
-          userId: auth.session.user.id,
-          action: "UPDATE_ORDER_ITEM",
-          recordId: parsed.data.orderItemId,
-          newValues: buildOrderItemQuantityAuditMetadata(parsed.data),
+        await updateItemQuantity({
+          orderId,
+          orderItemId: parsed.data.orderItemId,
+          quantity: parsed.data.quantity,
+          ...audit,
+          auditAction: "UPDATE_ORDER_ITEM",
         });
         break;
       }
       case "removeItem": {
-        await removeOrderItem(
-          parsed.data.orderItemId,
-          parsed.data.voidReason,
-        );
-        await calculateTotals(orderId);
-        await auditFromRequest(request, {
-          userId: auth.session.user.id,
-          action: "VOID_ORDER_ITEM",
-          recordId: parsed.data.orderItemId,
-          newValues: buildOrderItemVoidAuditMetadata(parsed.data),
+        await removeOrderItem({
+          orderId,
+          orderItemId: parsed.data.orderItemId,
+          voidReason: parsed.data.voidReason,
+          ...audit,
+          auditAction: "VOID_ORDER_ITEM",
         });
         break;
       }

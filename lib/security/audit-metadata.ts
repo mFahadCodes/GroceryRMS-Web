@@ -144,6 +144,51 @@ export function buildOrderDiscountAuditMetadata(input: {
   };
 }
 
+export type OrderTaxApplyAuditMetadata = {
+  orderId: number;
+  taxRateId: number;
+  priorTaxAmount: string;
+  newTaxAmount: string;
+  priorGrandTotal: string;
+  newGrandTotal: string;
+};
+
+export function buildOrderTaxApplyAuditMetadata(input: {
+  orderId: number;
+  taxRateId: number;
+  priorTaxAmount: bigint;
+  newTaxAmount: bigint;
+  priorGrandTotal: bigint;
+  newGrandTotal: bigint;
+}): OrderTaxApplyAuditMetadata {
+  return {
+    orderId: input.orderId,
+    taxRateId: input.taxRateId,
+    priorTaxAmount: input.priorTaxAmount.toString(),
+    newTaxAmount: input.newTaxAmount.toString(),
+    priorGrandTotal: input.priorGrandTotal.toString(),
+    newGrandTotal: input.newGrandTotal.toString(),
+  };
+}
+
+export type OrderAdjustmentAuditMetadata = {
+  adjustment: string;
+  priorGrandTotal: string;
+  newGrandTotal: string;
+};
+
+export function buildOrderAdjustmentAuditMetadata(input: {
+  adjustment: bigint;
+  priorGrandTotal: bigint;
+  newGrandTotal: bigint;
+}): OrderAdjustmentAuditMetadata {
+  return {
+    adjustment: input.adjustment.toString(),
+    priorGrandTotal: input.priorGrandTotal.toString(),
+    newGrandTotal: input.newGrandTotal.toString(),
+  };
+}
+
 export type OrderCheckoutAuditMetadata = {
   terminalId: number;
   paymentCount: number;
@@ -346,6 +391,20 @@ export function buildOrderItemQuantityAuditMetadata(input: {
   return {
     orderItemId: input.orderItemId,
     quantity: input.quantity ?? null,
+  };
+}
+
+export type OrderItemPatchAuditMetadata = OrderItemQuantityAuditMetadata &
+  FreeTextAuditSummary;
+
+export function buildOrderItemPatchAuditMetadata(input: {
+  orderItemId: number;
+  quantity?: number | null;
+  voidReason?: string | null;
+}): OrderItemPatchAuditMetadata {
+  return {
+    ...buildOrderItemQuantityAuditMetadata(input),
+    ...summarizeFreeTextReason(input.voidReason),
   };
 }
 

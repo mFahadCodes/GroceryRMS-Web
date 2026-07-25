@@ -2,15 +2,11 @@ import { NextRequest } from "next/server";
 import { parseJsonBody } from "@/lib/api/http";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
+import { ServiceError } from "@/lib/api/service-error";
 import { serializeRecord } from "@/lib/api/serialize";
 import { fail, ok } from "@/lib/api-response";
-import { auditFromRequest } from "@/lib/audit";
-import { buildOrderItemAddedAuditMetadata } from "@/lib/security/audit-metadata";
-import {
-  addItemToOrder,
-  calculateTotals,
-  getOrderById,
-} from "@/lib/services/order-service";
+import { resolveClientIp } from "@/lib/client-ip";
+import { addItemToOrder } from "@/lib/services/order-service";
 import { addOrderItemBodySchema } from "@/lib/validators/order.validators";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -30,7 +26,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   try {
-    await addItemToOrder({
+    const order = await addItemToOrder({
       orderId,
       productId: parsed.data.productId,
       scannedBarcode: parsed.data.scannedBarcode,
@@ -38,23 +34,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       quantity: parsed.data.quantity,
       weightKg: parsed.data.weightKg,
       notes: parsed.data.notes,
-    });
-    const updated = await calculateTotals(orderId);
-    const order = await getOrderById(updated.id);
-
-    await auditFromRequest(request, {
       userId: auth.session.user.id,
-      action: "ADD_ORDER_ITEM",
-      recordId: updated.id,
-      newValues: buildOrderItemAddedAuditMetadata(parsed.data),
+      auditIpAddress: resolveClientIp(request),
     });
-
     return ok(serializeRecord(order));
   } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "Failed to add item",
-      "ADD_ORDER_ITEM_FAILED",
-      400,
-    );
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
+    return fail("Failed to add item", "ADD_ORDER_ITEM_FAILED", 400);
   }
 }
