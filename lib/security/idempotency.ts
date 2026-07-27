@@ -22,6 +22,7 @@ export const FINANCIAL_IDEMPOTENCY_OPERATIONS = [
   "order.return",
   "order.void",
   "order.discount",
+  "inventory.stock-take-apply",
 ] as const;
 
 export type FinancialIdempotencyOperation =

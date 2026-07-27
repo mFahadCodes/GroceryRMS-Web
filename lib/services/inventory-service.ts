@@ -12,6 +12,12 @@ import {
   PURCHASE_ORDER_ITEM_NOT_FOUND,
   PURCHASE_ORDER_NOT_FOUND,
 } from "@/lib/inventory/purchase-order-receive";
+import {
+  assertAllItemsKnown,
+  assertStockNotStale,
+  claimStockTakeCompletion,
+} from "@/lib/security/stock-take-concurrency";
+import { executeFinancialIdempotent } from "@/lib/services/idempotency-service";
 
 export async function getInventorySummary() {
   const products = await prisma.product.findMany({
@@ -212,21 +218,28 @@ export async function receivePurchaseOrder(
   });
 }
 
-export async function createStockTake(input: { notes?: string | null; userId?: number | null }) {
-  const products = await prisma.product.findMany({ where: { isActive: true } });
-  return prisma.stockTake.create({
-    data: {
-      notes: input.notes ?? null,
-      userId: input.userId ?? null,
-      items: {
-        create: products.map((product) => ({
-          productId: product.id,
-          expectedQty: product.currentStock,
-          countedQty: product.currentStock,
-        })),
+export async function createStockTake(input: {
+  notes?: string | null;
+  userId?: number | null;
+  client?: Pick<typeof prisma, "$transaction">;
+}) {
+  const db = input.client ?? prisma;
+  return db.$transaction(async (tx) => {
+    const products = await tx.product.findMany({ where: { isActive: true } });
+    return tx.stockTake.create({
+      data: {
+        notes: input.notes ?? null,
+        userId: input.userId ?? null,
+        items: {
+          create: products.map((product) => ({
+            productId: product.id,
+            expectedQty: product.currentStock,
+            countedQty: product.currentStock,
+          })),
+        },
       },
-    },
-    include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true } } },
+    });
   });
 }
 
@@ -264,32 +277,63 @@ export async function getStockTakeById(id: number) {
   };
 }
 
+export type ApplyStockTakeOptions = {
+  rawKey?: string;
+  authoritativeTerminalId?: number | null;
+  txClient?: Prisma.TransactionClient;
+  client?: Pick<typeof prisma, "idempotencyRecord" | "$transaction">;
+};
+
 export async function applyStockTake(
   stockTakeId: number,
   items: Array<{ itemId: number; countedQty: string | number }>,
   userId?: number,
   auditIpAddress?: string | null,
+  options?: ApplyStockTakeOptions,
 ) {
-  return prisma.$transaction(async (tx) => {
+  const executeCore = async (tx: Prisma.TransactionClient) => {
     const stockTake = await tx.stockTake.findUnique({
       where: { id: stockTakeId },
-      include: { items: true },
+      include: { items: { include: { product: true } } },
     });
-    if (!stockTake) throw new Error("Stock take not found");
+    if (!stockTake) {
+      throw new ServiceError("Stock take not found", "STOCK_TAKE_NOT_FOUND", 404);
+    }
 
+    // 1. Claim completion FIRST via CAS update.
+    // Throws STOCK_TAKE_NOT_IN_PROGRESS if already Completed/Cancelled or not found.
+    await claimStockTakeCompletion(tx, stockTakeId);
+
+    // 2. Assert all requested line items belong to this stock take.
+    assertAllItemsKnown(stockTake.items, items);
+
+    // 3. Assert product current stock is not stale, update countedQty & currentStock,
+    // and record StockMovement adjustment for non-zero variance.
     for (const row of items) {
       const item = stockTake.items.find((candidate) => candidate.id === row.itemId);
-      if (!item) continue;
+      if (!item) {
+        throw new ServiceError(
+          `Stock take item ${row.itemId} not found`,
+          "STOCK_TAKE_ITEM_NOT_FOUND",
+          404,
+        );
+      }
+
+      assertStockNotStale(item.expectedQty, item.product.currentStock);
+
       const counted = new Prisma.Decimal(row.countedQty);
       const variance = counted.sub(item.expectedQty);
+
       await tx.stockTakeItem.update({
         where: { id: item.id },
         data: { countedQty: counted },
       });
+
       await tx.product.update({
         where: { id: item.productId },
         data: { currentStock: counted },
       });
+
       if (!variance.isZero()) {
         await tx.stockMovement.create({
           data: {
@@ -304,6 +348,7 @@ export async function applyStockTake(
       }
     }
 
+    // 4. Write required audit record inside the transaction.
     await writeRequiredAudit(tx, {
       userId: userId ?? null,
       action: "APPLY_STOCK_TAKE",
@@ -312,10 +357,33 @@ export async function applyStockTake(
       ipAddress: auditIpAddress ?? null,
     });
 
-    return tx.stockTake.update({
+    return tx.stockTake.findUniqueOrThrow({
       where: { id: stockTakeId },
-      data: { status: "Completed", completedAt: new Date() },
       include: { items: { include: { product: true } } },
     });
-  });
+  };
+
+  if (options?.rawKey) {
+    return executeFinancialIdempotent({
+      rawKey: options.rawKey,
+      operation: "inventory.stock-take-apply",
+      resourceType: "stock_takes",
+      resourceId: stockTakeId,
+      actorUserId: userId ?? 0,
+      authoritativeTerminalId: options.authoritativeTerminalId ?? null,
+      requestPayload: { stockTakeId, items },
+      client: options.client,
+      execute: async (tx) => {
+        const result = await executeCore(tx);
+        return { status: 200, body: result };
+      },
+    });
+  }
+
+  if (options?.txClient) {
+    return executeCore(options.txClient);
+  }
+
+  const db = options?.client ?? prisma;
+  return db.$transaction(executeCore);
 }

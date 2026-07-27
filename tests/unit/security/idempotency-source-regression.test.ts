@@ -123,12 +123,13 @@ describe("idempotency source regression: operation registry and metadata safety"
       "order.return",
       "order.void",
       "order.discount",
+      "inventory.stock-take-apply",
     ]);
   });
 
   it("idempotency.ts operation literals match the registered financial operations", () => {
     const source = read(IDEMPOTENCY_LIB);
-    const operationLiterals = source.match(/"order\.[a-z-]+"/g) ?? [];
+    const operationLiterals = source.match(/"[a-z]+\.[a-z-]+"/g) ?? [];
     const unique = [...new Set(operationLiterals.map((literal) => literal.slice(1, -1)))];
     expect(unique.sort()).toEqual(
       [...FINANCIAL_IDEMPOTENCY_OPERATIONS].sort(),

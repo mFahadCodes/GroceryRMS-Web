@@ -76,7 +76,7 @@ describe("purchase-order receive structural regression", () => {
 
   it("does not add durable request idempotency", () => {
     expect(route()).not.toMatch(/idempotency-key|Idempotency-Key/i);
-    expect(service()).not.toContain("executeFinancialIdempotent");
+    expect(receiveBlock()).not.toContain("executeFinancialIdempotent");
     expect(concurrency()).not.toContain("idempotency");
   });
 
