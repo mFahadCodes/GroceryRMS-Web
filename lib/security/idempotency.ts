@@ -22,6 +22,10 @@ export const FINANCIAL_IDEMPOTENCY_OPERATIONS = [
   "order.return",
   "order.void",
   "order.discount",
+  "order.apply-tax",
+  "order.apply-adjustment",
+  "order.add-item",
+  "order.update-item-quantity",
   "inventory.stock-take-apply",
 ] as const;
 

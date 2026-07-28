@@ -10,16 +10,22 @@ const mocks = vi.hoisted(() => ({
   updateItemQuantity: vi.fn(),
   updateOrderMetadata: vi.fn(),
   auditFromRequest: vi.fn(),
+  executeFinancialIdempotent: vi.fn(),
 }));
 
 vi.mock("@/lib/api/rbac", () => ({
   requirePermission: mocks.requirePermission,
 }));
 vi.mock("@/lib/audit", () => ({ auditFromRequest: mocks.auditFromRequest }));
+vi.mock("@/lib/services/idempotency-service", () => ({
+  executeFinancialIdempotent: mocks.executeFinancialIdempotent,
+  IdempotencyConflictError: class IdempotencyConflictError extends Error {},
+}));
 vi.mock("@/lib/services/order-service", () => ({
   addItemToOrder: mocks.addItemToOrder,
   calculateTotals: mocks.calculateTotals,
   getOrderById: mocks.getOrderById,
+  orderInclude: {},
   removeOrderItem: mocks.removeOrderItem,
   updateItemQuantity: mocks.updateItemQuantity,
   updateOrderMetadata: mocks.updateOrderMetadata,
@@ -71,6 +77,31 @@ describe("generic order update route contract", () => {
     mocks.requirePermission.mockResolvedValue(levelOneSession());
     mocks.getOrderById.mockResolvedValue({ ...OPEN_ORDER });
     mocks.updateOrderMetadata.mockResolvedValue({ ...OPEN_ORDER });
+    mocks.executeFinancialIdempotent.mockImplementation(
+      async (input: {
+        execute: (tx: {
+          order: { findUniqueOrThrow: () => Promise<typeof OPEN_ORDER> };
+        }) => Promise<{ status: number; body: unknown }>;
+      }) => {
+        const body = { ...OPEN_ORDER };
+        const result = await input.execute({
+          order: {
+            findUniqueOrThrow: vi.fn().mockResolvedValue(body),
+          },
+        });
+        return {
+          replayed: false,
+          status: result.status,
+          body: result.body ?? body,
+          responseBody: JSON.stringify({
+            success: true,
+            data: result.body ?? body,
+          }),
+        };
+      },
+    );
+    mocks.addItemToOrder.mockResolvedValue({ id: 50, status: "Open" });
+    mocks.updateItemQuantity.mockResolvedValue({ id: 50, status: "Open" });
   });
 
   it("requires the existing base permission before doing anything", async () => {
@@ -244,12 +275,21 @@ describe("generic order update route contract", () => {
   });
 
   it("preserves the existing item action wiring", async () => {
-    mocks.addItemToOrder.mockResolvedValue({});
     const response = await PUT(
-      request({ action: "addItem", productId: 3, quantity: 2 }),
+      request(
+        { action: "addItem", productId: 3, quantity: 2 },
+        { "idempotency-key": "550e8400-e29b-41d4-a716-446655440000" },
+      ),
       context,
     );
     expect(response.status).toBe(200);
+    expect(mocks.executeFinancialIdempotent).toHaveBeenCalledOnce();
+    expect(mocks.executeFinancialIdempotent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "order.add-item",
+        resourceId: 50,
+      }),
+    );
     expect(mocks.addItemToOrder).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         orderId: 50,
@@ -257,9 +297,21 @@ describe("generic order update route contract", () => {
         quantity: 2,
         userId: 2,
       }),
+      expect.anything(),
     );
     expect(mocks.calculateTotals).not.toHaveBeenCalled();
     expect(mocks.updateOrderMetadata).not.toHaveBeenCalled();
     expect(mocks.auditFromRequest).not.toHaveBeenCalled();
+    expect(response.headers.get("Idempotency-Replayed")).toBe("false");
+  });
+
+  it("rejects addItem without Idempotency-Key", async () => {
+    const response = await PUT(
+      request({ action: "addItem", productId: 3, quantity: 2 }),
+      context,
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.executeFinancialIdempotent).not.toHaveBeenCalled();
+    expect(mocks.addItemToOrder).not.toHaveBeenCalled();
   });
 });
