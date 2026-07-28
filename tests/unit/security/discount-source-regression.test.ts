@@ -26,6 +26,10 @@ describe("discount source regression", () => {
       "order.return",
       "order.void",
       "order.discount",
+      "order.apply-tax",
+      "order.apply-adjustment",
+      "order.add-item",
+      "order.update-item-quantity",
       "inventory.stock-take-apply",
     ]);
   });

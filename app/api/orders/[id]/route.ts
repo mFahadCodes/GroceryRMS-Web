@@ -1,14 +1,21 @@
 import { NextRequest } from "next/server";
 import { PERMS } from "@/lib/api/permissions";
 import { requirePermission } from "@/lib/api/rbac";
-import { fail, ok } from "@/lib/api-response";
+import { ServiceError } from "@/lib/api/service-error";
+import { fail, ok, okFromStoredEnvelope } from "@/lib/api-response";
 import { serializeRecord } from "@/lib/api/serialize";
 import { auditFromRequest } from "@/lib/audit";
 import { resolveClientIp } from "@/lib/client-ip";
 import { buildOrderMetadataUpdateAuditMetadata } from "@/lib/security/audit-metadata";
+import { parseIdempotencyKey } from "@/lib/security/idempotency";
+import {
+  executeFinancialIdempotent,
+  IdempotencyConflictError,
+} from "@/lib/services/idempotency-service";
 import {
   addItemToOrder,
   getOrderById,
+  orderInclude,
   removeOrderItem,
   updateItemQuantity,
   updateOrderMetadata,
@@ -16,6 +23,15 @@ import {
 import { modifyOrderSchema } from "@/lib/validators/order.validators";
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+const putOrderResponseInclude = {
+  ...orderInclude,
+  orderItems: {
+    include: { product: true, variant: true },
+  },
+  loyaltyTransactions: true,
+  driver: { select: { id: true, name: true, phone: true } },
+} as const;
 
 /**
  * SEC-04A: bound the generic modify body so oversized payloads are rejected
@@ -68,34 +84,118 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     return fail("Invalid request body", "VALIDATION_ERROR", 400, parsed.error.flatten());
   }
 
+  const audit = {
+    userId: auth.session.user.id,
+    auditIpAddress: resolveClientIp(request),
+  };
+  const terminalId = auth.session.authoritative?.terminalId ?? null;
+
   try {
-    const audit = {
-      userId: auth.session.user.id,
-      auditIpAddress: resolveClientIp(request),
-    };
     switch (parsed.data.action) {
       case "addItem": {
-        await addItemToOrder({
+        const addItem = parsed.data;
+        if (addItem.action !== "addItem") break;
+
+        const keyParsed = parseIdempotencyKey(request.headers.get("idempotency-key"));
+        if (!keyParsed.ok) {
+          return fail(keyParsed.message, keyParsed.code, 400);
+        }
+
+        const requestPayload = {
           orderId,
-          productId: parsed.data.productId,
-          variantId: parsed.data.variantId,
-          quantity: parsed.data.quantity,
-          weightKg: parsed.data.weightKg,
-          notes: parsed.data.notes,
-          scannedBarcode: parsed.data.scannedBarcode,
-          ...audit,
+          productId: addItem.productId ?? null,
+          variantId: addItem.variantId ?? null,
+          quantity: addItem.quantity,
+          weightKg: addItem.weightKg ?? null,
+          notes: addItem.notes ?? null,
+          scannedBarcode: addItem.scannedBarcode ?? null,
+        };
+
+        const result = await executeFinancialIdempotent({
+          rawKey: keyParsed.key,
+          operation: "order.add-item",
+          resourceType: "orders",
+          resourceId: orderId,
+          actorUserId: auth.session.user.id,
+          authoritativeTerminalId: terminalId,
+          requestPayload,
+          execute: async (tx) => {
+            await addItemToOrder(
+              {
+                orderId,
+                productId: addItem.productId,
+                variantId: addItem.variantId,
+                quantity: addItem.quantity,
+                weightKg: addItem.weightKg,
+                notes: addItem.notes,
+                scannedBarcode: addItem.scannedBarcode,
+                ...audit,
+              },
+              tx,
+            );
+            const updated = await tx.order.findUniqueOrThrow({
+              where: { id: orderId },
+              include: putOrderResponseInclude,
+            });
+            return { status: 200, body: serializeRecord(updated) };
+          },
         });
-        break;
+
+        if (result.replayed) {
+          return okFromStoredEnvelope(result.responseBody, result.status, {
+            "Idempotency-Replayed": "true",
+          });
+        }
+        return ok(result.body, result.status, { "Idempotency-Replayed": "false" });
       }
       case "updateItem": {
-        await updateItemQuantity({
+        const updateItem = parsed.data;
+        if (updateItem.action !== "updateItem") break;
+
+        const keyParsed = parseIdempotencyKey(request.headers.get("idempotency-key"));
+        if (!keyParsed.ok) {
+          return fail(keyParsed.message, keyParsed.code, 400);
+        }
+
+        const requestPayload = {
           orderId,
-          orderItemId: parsed.data.orderItemId,
-          quantity: parsed.data.quantity,
-          ...audit,
-          auditAction: "UPDATE_ORDER_ITEM",
+          orderItemId: updateItem.orderItemId,
+          quantity: updateItem.quantity,
+        };
+
+        const result = await executeFinancialIdempotent({
+          rawKey: keyParsed.key,
+          operation: "order.update-item-quantity",
+          resourceType: "orders",
+          resourceId: orderId,
+          actorUserId: auth.session.user.id,
+          authoritativeTerminalId: terminalId,
+          requestPayload,
+          execute: async (tx) => {
+            await updateItemQuantity(
+              {
+                orderId,
+                orderItemId: updateItem.orderItemId,
+                quantity: updateItem.quantity,
+                ...audit,
+                auditAction: "UPDATE_ORDER_ITEM",
+              },
+              tx,
+            );
+            const updated = await tx.order.findUniqueOrThrow({
+              where: { id: orderId },
+              include: putOrderResponseInclude,
+            });
+            return { status: 200, body: serializeRecord(updated) };
+          },
         });
-        break;
+
+        if (result.replayed) {
+          return okFromStoredEnvelope(result.responseBody, result.status, {
+            "Idempotency-Replayed": "true",
+          });
+        }
+        return ok(result.body, result.status, { "Idempotency-Replayed": "false" });
       }
       case "removeItem": {
         await removeOrderItem({
@@ -125,6 +225,12 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const updated = await getOrderById(orderId);
     return ok(serializeRecord(updated));
   } catch (error) {
+    if (error instanceof IdempotencyConflictError) {
+      return fail(error.message, error.code, 409);
+    }
+    if (error instanceof ServiceError) {
+      return fail(error.message, error.code, error.status);
+    }
     return fail(
       error instanceof Error ? error.message : "Failed to modify order",
       "MODIFY_ORDER_FAILED",

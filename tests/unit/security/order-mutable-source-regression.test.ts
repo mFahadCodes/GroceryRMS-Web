@@ -103,11 +103,13 @@ describe("order mutable source regression", () => {
     expect(concurrency).not.toMatch(/PartiallyPaid/);
   });
 
-  it("routes do not introduce Idempotency-Key for tax/items/adjustment", () => {
+  it("cart mutation routes use durable idempotency (P1-A)", () => {
     for (const file of [TAX_ROUTE, ITEMS_ROUTE, ITEM_ID_ROUTE, ADJUSTMENT_ROUTE]) {
       const source = read(file);
-      expect(source, file).not.toContain("idempotency-key");
-      expect(source, file).not.toContain("executeFinancialIdempotent");
+      expect(source, file).toContain("idempotency-key");
+      expect(source, file).toContain("executeFinancialIdempotent");
     }
+    const itemRoute = read(ITEM_ID_ROUTE);
+    expect(itemRoute).toContain("PATCH_ORDER_ITEM_CONFLICT");
   });
 });

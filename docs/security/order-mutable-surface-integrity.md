@@ -1,6 +1,6 @@
 # Order Mutable-Surface Integrity
 
-**Wave:** P0-F  
+**Wave:** P0-F (CAS + transactions) · **P1-A** (durable idempotency for cart mutations)  
 **Approved baseline:** `794e7d7616e46d55dc331716fcae32640bc474cb`
 
 ## Business rule
@@ -34,11 +34,30 @@ Losing paths leave no mutation, no audit, and no totals change. Audit insert fai
 
 ## Routes
 
-Dedicated tax / items / adjustment routes are thin permission + validation wrappers. They do **not** call `auditFromRequest` and do **not** add durable `Idempotency-Key` in this phase.
+Dedicated tax / items / adjustment routes are thin permission + validation wrappers. They do **not** call `auditFromRequest`.
 
-## Out of scope for P0-F
+### P1-A: Durable idempotency (cart mutations)
 
-- Durable idempotency for tax / item / adjustment retries (P1+)
+The following operations require a valid `Idempotency-Key` header and run through `executeFinancialIdempotent`:
+
+| Operation literal | Route(s) | `resourceId` |
+|---|---|---|
+| `order.apply-tax` | `PATCH /api/orders/[id]/tax` | `orderId` |
+| `order.apply-adjustment` | `PATCH /api/orders/[id]/adjustment` | `orderId` |
+| `order.add-item` | `POST /api/orders/[id]/items`, `PUT /api/orders/[id]` (`addItem`) | `orderId` |
+| `order.update-item-quantity` | `PATCH /api/orders/[id]/items/[itemId]` (quantity only), `PUT /api/orders/[id]` (`updateItem`) | `orderId` |
+
+**Terminal scope:** `authoritativeTerminalId ?? null` (checkout-style nullable).
+
+**PATCH item co-presence:** Requests that include both `quantity` and `voidReason` are rejected with `400` / `PATCH_ORDER_ITEM_CONFLICT` without processing either field.
+
+**Deferred (no idempotency in P1-A):** item removal — `DELETE /api/orders/[id]/items/[itemId]`, `voidReason`-only `PATCH`, and `PUT` `removeItem`.
+
+Responses include `Idempotency-Replayed: true|false`. Payload mismatches on the same key return `409`.
+
+## Out of scope
+
 - Schema or paisa formula changes
 - Manager approval for these mutations
-- Inventory / PO / frontend changes
+- Durable idempotency for item removal / void-item paths
+- Inventory / PO / frontend `lib/financial-idempotency/types.ts` changes
